@@ -56,7 +56,6 @@ export async function transcribeChunk(path: string, settings: Settings, continui
       else if (model.languageField === "language") form.set("language", settings.language)
       const prompt = [settings.prompt, continuity ? `Previous transcript context:\n${continuity}` : ""].filter(Boolean).join("\n\n")
       if (model.prompt && prompt) form.set("prompt", prompt)
-      if (model.id === "gpt-transcribe") for (const keyword of settings.keywords) form.append("keywords[]", keyword)
     }
     let response: Response
     try { response = await fetch(endpoint(settings), { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }) }

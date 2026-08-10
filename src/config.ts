@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, chmodSync, existsSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import type { Settings } from "./types"
 import { validateSettings } from "./models"
 
@@ -11,7 +11,6 @@ export const DEFAULT_SETTINGS: Settings = {
   diarize: false,
   cleanup: false,
   prompt: "",
-  keywords: [],
   chunkSeconds: 900,
   chunkOverlapSeconds: 0,
   continuityChars: 0,
@@ -25,9 +24,25 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export function xdgConfigHome(): string { return process.env.XDG_CONFIG_HOME || join(process.env.HOME || ".", ".config") }
 export function xdgStateHome(): string { return process.env.XDG_STATE_HOME || join(process.env.HOME || ".", ".local", "state") }
-export function configPath(): string { return join(xdgConfigHome(), "dotfiles", "transcribe", "config.json") }
-export function legacyConfigPath(): string { return join(xdgConfigHome(), "dotfiles", "transcribe.json") }
-export function stateRoot(): string { return join(xdgStateHome(), "dotfiles", "transcribe") }
+export function configPath(): string {
+  return process.env.TRANSCRIBE_CONFIG_DIR
+    ? join(resolve(process.env.TRANSCRIBE_CONFIG_DIR), "config.json")
+    : join(xdgConfigHome(), "transcribe", "config.json")
+}
+
+export function legacyConfigPaths(): string[] {
+  return [
+    join(xdgConfigHome(), "dotfiles", "transcribe", "config.json"),
+    join(xdgConfigHome(), "dotfiles", "transcribe.json"),
+  ]
+}
+
+export function stateRoot(): string {
+  if (process.env.TRANSCRIBE_STATE_DIR) return resolve(process.env.TRANSCRIBE_STATE_DIR)
+  const preferred = join(xdgStateHome(), "transcribe")
+  const legacy = join(xdgStateHome(), "dotfiles", "transcribe")
+  return existsSync(preferred) || !existsSync(legacy) ? preferred : legacy
+}
 
 function asNumber(value: unknown, fallback: number): number { const number = Number(value); return Number.isFinite(number) ? number : fallback }
 function asBoolean(value: unknown, fallback: boolean): boolean { return value === undefined ? fallback : value === true || value === 1 || value === "1" }
@@ -36,7 +51,7 @@ export function normalizeSettings(raw: Record<string, unknown> = {}): Settings {
   const legacy = (camel: string, snake: string): unknown => raw[camel] ?? raw[snake]
   const provider = String(legacy("provider", "provider") ?? DEFAULT_SETTINGS.provider) as Settings["provider"]
   let model = String(legacy("model", "model") ?? "")
-  if (!model) model = provider === "openai" ? "gpt-transcribe" : provider === "fireworks" ? "whisper-v3-turbo" : "whisper-large-v3-turbo"
+  if (!model || model === "gpt-transcribe") model = provider === "openai" ? "gpt-4o-transcribe" : provider === "fireworks" ? "whisper-v3-turbo" : "whisper-large-v3-turbo"
   const settings: Settings = {
     schemaVersion: 2,
     provider,
@@ -45,7 +60,6 @@ export function normalizeSettings(raw: Record<string, unknown> = {}): Settings {
     diarize: asBoolean(legacy("diarize", "diarize"), false),
     cleanup: asBoolean(legacy("cleanup", "cleanup"), false),
     prompt: String(legacy("prompt", "prompt") ?? ""),
-    keywords: Array.isArray(raw.keywords) ? raw.keywords.map(String) : [],
     chunkSeconds: asNumber(legacy("chunkSeconds", "chunk_seconds"), DEFAULT_SETTINGS.chunkSeconds),
     chunkOverlapSeconds: asNumber(legacy("chunkOverlapSeconds", "chunk_overlap_seconds"), DEFAULT_SETTINGS.chunkOverlapSeconds),
     continuityChars: asNumber(legacy("continuityChars", "continuity_chars"), DEFAULT_SETTINGS.continuityChars),
@@ -61,11 +75,12 @@ export function normalizeSettings(raw: Record<string, unknown> = {}): Settings {
 }
 
 export function loadSettings(): Settings {
-  const target = existsSync(configPath()) ? configPath() : legacyConfigPath()
+  const preferred = configPath()
+  const target = [preferred, ...legacyConfigPaths()].find(existsSync) || preferred
   if (!existsSync(target)) return { ...DEFAULT_SETTINGS }
   try {
     const settings = normalizeSettings(JSON.parse(readFileSync(target, "utf8")))
-    if (target === legacyConfigPath() && !existsSync(configPath())) saveSettings(settings)
+    if (target !== preferred && !existsSync(preferred)) saveSettings(settings)
     return settings
   } catch { return { ...DEFAULT_SETTINGS } }
 }

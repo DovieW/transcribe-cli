@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run check
+      - run: npm run build
+      - name: Prepare release assets
+        run: |
+          cp dist/transcribe dist/transcribe-linux-x64
+          cd dist
+          sha256sum transcribe-linux-x64 > transcribe-linux-x64.sha256
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/transcribe-linux-x64
+          dist/transcribe-linux-x64.sha256
+          --verify-tag
+          --generate-notes

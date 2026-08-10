@@ -14,13 +14,13 @@ writeFileSync(audio, "test")
 afterEach(() => { globalThis.fetch = originalFetch; process.env.OPENAI_API_KEY = originalOpenAI; process.env.GROQ_API_KEY = originalGroq })
 
 describe("provider requests", () => {
-  test("uses languages[] for gpt-transcribe", async () => {
+  test("uses the documented language field for gpt-4o-transcribe", async () => {
     process.env.OPENAI_API_KEY = "test-key"
     let form: FormData | null = null
     globalThis.fetch = (async (_input: any, init: any) => { form = init.body; return new Response(JSON.stringify({ text: "hello", languages: [{ code: "en" }], usage: { total_tokens: 3 } }), { status: 200 }) }) as any
-    const result = await transcribeChunk(audio, normalizeSettings({ provider: "openai", model: "gpt-transcribe", language: "en" }))
-    expect(form!.get("languages[]")).toBe("en")
-    expect(form!.get("language")).toBeNull()
+    const result = await transcribeChunk(audio, normalizeSettings({ provider: "openai", model: "gpt-4o-transcribe", language: "en" }))
+    expect(form!.get("language")).toBe("en")
+    expect(form!.get("languages[]")).toBeNull()
     expect(result.text).toBe("hello")
   })
 

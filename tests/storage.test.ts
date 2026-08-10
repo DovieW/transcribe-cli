@@ -11,7 +11,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 
 describe("library", () => {
   test("chooses a stable suffix for repeated quick runs", () => {
-    expect(nextAvailableRunName("meeting — gpt-transcribe", ["meeting — gpt-transcribe", "meeting — gpt-transcribe (2)"])).toBe("meeting — gpt-transcribe (3)")
+    expect(nextAvailableRunName("meeting — gpt-4o-transcribe", ["meeting — gpt-4o-transcribe", "meeting — gpt-4o-transcribe (2)"])).toBe("meeting — gpt-4o-transcribe (3)")
   })
 
   test("creates, resolves, renames, duplicates, and deletes runs", () => {

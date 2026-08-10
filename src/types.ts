@@ -19,7 +19,6 @@ export interface Settings {
   diarize: boolean
   cleanup: boolean
   prompt: string
-  keywords: string[]
   chunkSeconds: number
   chunkOverlapSeconds: number
   continuityChars: number

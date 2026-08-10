@@ -3,7 +3,7 @@ import type { InputRenderable, ScrollBoxRenderable, SelectOption, SelectRenderab
 import { createEffect, createMemo, createSignal, Show } from "solid-js"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, join } from "node:path"
-import { loadSettings, saveSettings } from "./config"
+import { configPath, loadSettings, saveSettings, stateRoot } from "./config"
 import { discoverFiles, MEDIA_EXTENSIONS, TEXT_EXTENSIONS, type FileChoice } from "./files"
 import { fuzzyOptions } from "./fuzzy"
 import { expandUserPath, pathSuggestions } from "./paths"
@@ -179,7 +179,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
     const settingRows = (): SelectOption[] => options([
       ["Provider", settings.provider, "provider"], ["Model", settings.diarize ? "gpt-4o-transcribe-diarize" : settings.model, "model"],
       ["Language", settings.language, "language"], ["Diarization", settings.diarize ? "on" : "off", "diarize"],
-      ["YouTube subtitle cleanup", settings.cleanup ? "on" : "off", "cleanup"], ["Prompt", settings.prompt || "none", "prompt"], ["Keywords", settings.keywords.join(", ") || "none", "keywords"],
+      ["YouTube subtitle cleanup", settings.cleanup ? "on" : "off", "cleanup"], ["Prompt", settings.prompt || "none", "prompt"],
       ["Chunk seconds", String(settings.chunkSeconds), "chunkSeconds"], ["Chunk overlap", String(settings.chunkOverlapSeconds), "chunkOverlapSeconds"],
       ["Continuity characters", String(settings.continuityChars), "continuityChars"], ["Chunk concurrency", String(settings.chunkConcurrency), "chunkConcurrency"],
       ["Maximum upload MB", String(settings.maxUploadMb), "maxUploadMb"], ["Maximum retries", String(settings.maxRetries), "maxRetries"],
@@ -194,7 +194,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       if (["diarize", "cleanup", "keepAudio", "keepChunks"].includes(key)) {
         ;(settings as any)[key] = !(settings as any)[key]
         if (key === "diarize" && settings.diarize) { settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize" }
-        if (key === "diarize" && !settings.diarize) settings.model = "gpt-transcribe"
+        if (key === "diarize" && !settings.diarize) settings.model = "gpt-4o-transcribe"
         setSettingsVersion((value) => value + 1); return
       }
       editingKey = key
@@ -203,8 +203,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
 
     const submitSetting = (value: string) => {
       if (!editingKey) return
-      if (editingKey === "keywords") settings.keywords = value.split(",").map((item) => item.trim()).filter(Boolean)
-      else if (["chunkSeconds", "chunkOverlapSeconds", "continuityChars", "chunkConcurrency", "maxUploadMb", "maxRetries", "initialRetrySeconds"].includes(editingKey)) (settings as any)[editingKey] = Number(value)
+      if (["chunkSeconds", "chunkOverlapSeconds", "continuityChars", "chunkConcurrency", "maxUploadMb", "maxRetries", "initialRetrySeconds"].includes(editingKey)) (settings as any)[editingKey] = Number(value)
       else (settings as any)[editingKey] = value
       editingKey = null; go("settings")
     }
@@ -330,7 +329,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       <Show when={screen() === "new-location"}><PathEntry title="new transcription · exact location" placeholder="path or URL" extensions={MEDIA_EXTENSIONS} submit={acceptInput} allowUrls/></Show>
       <Show when={screen() === "new-name"}><box flexDirection="column" padding={1}><Header title="name this run" subtitle={`Suggested: ${runName}`}/><input focused value={runName} onSubmit={(value) => { runName = String(value).trim(); if (!runName) return fail("Run name cannot be blank."); go("review") }}/><ErrorLine/></box></Show>
       <Show when={screen() === "new-provider"}><Menu title="provider" items={options([
-        ["OpenAI", "gpt-transcribe and specialized models", "openai"], ["Groq", "Whisper Large v3", "groq"], ["Fireworks", "Whisper v3", "fireworks"], ["YouTube transcript", "Use existing English subtitles", "youtube-transcript"],
+        ["OpenAI", "GPT-4o transcription models", "openai"], ["Groq", "Whisper Large v3", "groq"], ["Fireworks", "Whisper v3", "fireworks"], ["YouTube transcript", "Use existing English subtitles", "youtube-transcript"],
       ])} select={(option) => { settings.provider = option.value as Provider; settings.diarize = false; settings.model = modelsFor(settings.provider).find((model) => model.default)?.id || "youtube"; setSettingsVersion((value) => value + 1); go(pickerReturn) }}/></Show>
       <Show when={screen() === "new-model"}><Menu title="model" items={settings.provider === "youtube-transcript" ? options([["YouTube subtitles", "Use the best available English subtitles", "youtube"]]) : modelsFor(settings.provider).map((model) => ({ name: model.label, description: `${model.id}${model.diarization ? " · speaker labels" : ""}`, value: model.id }))} select={(option) => { settings.model = String(option.value); settings.diarize = settings.model === "gpt-4o-transcribe-diarize"; setSettingsVersion((value) => value + 1); go(pickerReturn) }}/></Show>
       <Show when={screen() === "review"}><Menu title="review" subtitle="Your settings are remembered. Change anything or start." items={options([
@@ -381,7 +380,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       <Show when={screen() === "compare-external-b"}><Menu title="compare · transcript B" items={fileItems(textChoices().filter((choice) => choice.path !== compareA), "Enter a text file not listed below")} select={(option) => { if (option.value === "__manual__") go("compare-external-b-input"); else { compareB = String(option.value); void compare(compareA, compareB) } }}/></Show>
       <Show when={screen() === "compare-external-b-input"}><PathEntry title="compare · transcript B · exact path" placeholder="second.txt" extensions={TEXT_EXTENSIONS} submit={(value) => { compareB = value; void compare(compareA, compareB) }}/></Show>
       <Show when={screen() === "compare-result"}><Viewer/></Show>
-      <Show when={screen() === "help"}><box flexDirection="column" padding={1}><Header title="help"/><scrollbox focused border padding={1} flexGrow={1}><text selectable>{`transcribe is a central, resumable transcription library.\n\nQuick Transcribe\n  Choose a local media file and start immediately with remembered settings.\n  The completed transcript opens directly in the viewer and remains in the library.\n\nMenus\n  Type  fuzzy-find the active menu\n  ↑/↓  move\n  Enter choose\n  Esc   clear search, then go back (quit from home)\n  Ctrl-U clear search\n  Ctrl-C quit; during jobs it requests a safe pause\n\nViewer\n  Type        search transcript\n  Enter       next match\n  Shift-Enter previous match\n  Ctrl-Y      copy entire transcript\n  Ctrl-E      open transcript in $EDITOR\n\nCredentials\n  Export OPENAI_API_KEY, GROQ_API_KEY, or FIREWORKS_API_KEY only when needed. Keys are never saved.\n\nStorage\n  Config: ~/.config/dotfiles/transcribe/config.json\n  Library: ~/.local/state/dotfiles/transcribe\n\nCLI\n  transcribe run INPUT --name NAME\n  transcribe resume RUN\n  transcribe restart RUN\n  transcribe compare LEFT RIGHT\n  transcribe export RUN --format txt|json --output PATH\n  transcribe doctor`}</text></scrollbox></box></Show>
+      <Show when={screen() === "help"}><box flexDirection="column" padding={1}><Header title="help"/><scrollbox focused border padding={1} flexGrow={1}><text selectable>{`transcribe is a central, resumable transcription library.\n\nQuick Transcribe\n  Choose a local media file and start immediately with remembered settings.\n  The completed transcript opens directly in the viewer and remains in the library.\n\nMenus\n  Type  fuzzy-find the active menu\n  ↑/↓  move\n  Enter choose\n  Esc   clear search, then go back (quit from home)\n  Ctrl-U clear search\n  Ctrl-C quit; during jobs it requests a safe pause\n\nViewer\n  Type        search transcript\n  Enter       next match\n  Shift-Enter previous match\n  Ctrl-Y      copy entire transcript\n  Ctrl-E      open transcript in $EDITOR\n\nCredentials\n  Export OPENAI_API_KEY, GROQ_API_KEY, or FIREWORKS_API_KEY only when needed. Keys are never saved.\n\nStorage\n  Config: ${configPath()}\n  Library: ${stateRoot()}\n\nCLI\n  transcribe run INPUT --name NAME\n  transcribe resume RUN\n  transcribe restart RUN\n  transcribe compare LEFT RIGHT\n  transcribe export RUN --format txt|json --output PATH\n  transcribe doctor`}</text></scrollbox></box></Show>
       <Show when={screen() === "message"}><box flexDirection="column" padding={1}><Header title="message"/><ErrorLine/><text>{message()}</text><text fg={muted}>Press Esc to go back.</text></box></Show>
     </>
   }

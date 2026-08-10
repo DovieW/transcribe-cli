@@ -3,7 +3,7 @@ import { fuzzyOptions, fuzzyScore } from "../src/fuzzy"
 
 describe("fuzzy matching", () => {
   test("matches subsequences and ranks exact text first", () => {
-    expect(fuzzyScore("gpttr", "gpt-transcribe")).not.toBeNull()
+    expect(fuzzyScore("gpt4otr", "gpt-4o-transcribe")).not.toBeNull()
     const results = fuzzyOptions("gpt transcribe", [
       { name: "Groq", description: "whisper-large-v3" },
       { name: "GPT Transcribe", description: "OpenAI transcription" },

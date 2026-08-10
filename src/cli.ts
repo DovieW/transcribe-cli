@@ -29,7 +29,6 @@ Run settings:
   --language CODE               Remembered language hint
   --diarize / --no-diarize      OpenAI speaker-labelled transcription
   --prompt TEXT                 Context or subtitle cleanup prompt
-  --keywords WORD,WORD          gpt-transcribe literal hints
   --chunk-seconds N             Default: 900
   --chunk-overlap-seconds N     Default: 0
   --continuity-chars N          Prior transcript context; forces sequential chunks
@@ -60,11 +59,10 @@ function parseSettings(args: string[]): { settings: Settings, name?: string } {
     if (flag === "--model") { settings.model = take(args, index, flag); modelChanged = true; continue }
     if (flag === "--language") { settings.language = take(args, index, flag); continue }
     if (flag === "--prompt") { settings.prompt = take(args, index, flag); continue }
-    if (flag === "--keywords") { settings.keywords = take(args, index, flag).split(",").map((value) => value.trim()).filter(Boolean); continue }
     const numbers: Record<string, keyof Settings> = { "--chunk-seconds": "chunkSeconds", "--chunk-overlap-seconds": "chunkOverlapSeconds", "--continuity-chars": "continuityChars", "--chunk-concurrency": "chunkConcurrency", "--max-upload-mb": "maxUploadMb", "--max-retries": "maxRetries", "--initial-retry-seconds": "initialRetrySeconds" }
     if (numbers[flag]) { (settings as any)[numbers[flag]!] = Number(take(args, index, flag)); continue }
     if (flag === "--diarize") { settings.diarize = true; settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize"; args.splice(index, 1); continue }
-    if (flag === "--no-diarize") { settings.diarize = false; if (settings.model === "gpt-4o-transcribe-diarize") settings.model = "gpt-transcribe"; args.splice(index, 1); continue }
+    if (flag === "--no-diarize") { settings.diarize = false; if (settings.model === "gpt-4o-transcribe-diarize") settings.model = "gpt-4o-transcribe"; args.splice(index, 1); continue }
     if (flag === "--keep-audio") { settings.keepAudio = true; args.splice(index, 1); continue }
     if (flag === "--keep-chunks") { settings.keepChunks = true; args.splice(index, 1); continue }
     if (flag === "--cleanup") { settings.cleanup = true; settings.provider = "youtube-transcript"; args.splice(index, 1); continue }

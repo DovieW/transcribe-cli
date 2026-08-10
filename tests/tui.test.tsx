@@ -25,7 +25,7 @@ describe("TUI navigation", () => {
     const source = library.sourceFor("local", "/tmp/example.m4a", "Example recording")
     const run = library.createRun(source, "first pass", {
       schemaVersion: 2, provider: "groq", model: "whisper-large-v3-turbo", language: "en",
-      diarize: false, cleanup: false, prompt: "", keywords: [], chunkSeconds: 900,
+      diarize: false, cleanup: false, prompt: "", chunkSeconds: 900,
       chunkOverlapSeconds: 0, continuityChars: 0, chunkConcurrency: 1, maxUploadMb: 24,
       maxRetries: 10, initialRetrySeconds: 30, keepAudio: false, keepChunks: false,
     })

@@ -12,8 +12,7 @@ export interface ModelCapability {
 }
 
 export const MODELS: ModelCapability[] = [
-  { provider: "openai", id: "gpt-transcribe", label: "GPT Transcribe", diarization: false, prompt: true, timestamps: false, languageField: "languages", default: true },
-  { provider: "openai", id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", diarization: false, prompt: true, timestamps: false, languageField: "language" },
+  { provider: "openai", id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", diarization: false, prompt: true, timestamps: false, languageField: "language", default: true },
   { provider: "openai", id: "gpt-4o-mini-transcribe", label: "GPT-4o mini Transcribe", diarization: false, prompt: true, timestamps: false, languageField: "language" },
   { provider: "openai", id: "whisper-1", label: "Whisper 1", diarization: false, prompt: true, timestamps: true, languageField: "language" },
   { provider: "openai", id: "gpt-4o-transcribe-diarize", label: "GPT-4o Transcribe Diarize", diarization: true, prompt: false, timestamps: true, languageField: "none" },
