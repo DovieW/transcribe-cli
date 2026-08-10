@@ -31,8 +31,8 @@ fi
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
 
-curl -fL --retry 3 --output "$TEMP_DIR/$ASSET" "$RELEASE_URL/$ASSET"
-curl -fL --retry 3 --output "$TEMP_DIR/$ASSET.sha256" "$RELEASE_URL/$ASSET.sha256"
+curl --fail --location --silent --show-error --retry 3 --output "$TEMP_DIR/$ASSET" "$RELEASE_URL/$ASSET"
+curl --fail --location --silent --show-error --retry 3 --output "$TEMP_DIR/$ASSET.sha256" "$RELEASE_URL/$ASSET.sha256"
 (
   cd "$TEMP_DIR"
   sha256sum --check "$ASSET.sha256"
