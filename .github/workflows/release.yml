@@ -32,5 +32,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME"
           dist/transcribe-linux-x64
           dist/transcribe-linux-x64.sha256
+          assets/transcribe-cli-logo.png
           --verify-tag
           --generate-notes
