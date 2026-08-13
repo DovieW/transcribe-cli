@@ -1,4 +1,8 @@
-# transcribe-cli
+<p align="center">
+  <img src="assets/transcribe-cli-logo.png" alt="transcribe-cli logo" width="180">
+</p>
+
+<h1 align="center">transcribe-cli</h1>
 
 [![CI](https://github.com/DovieW/transcribe-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/DovieW/transcribe-cli/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -51,7 +55,7 @@ transcribe doctor
 
 The installer verifies the release checksum before replacing the binary. Set
 `TRANSCRIBE_INSTALL_DIR` to choose another destination or
-`TRANSCRIBE_VERSION=v2.0.0` to install a specific release.
+`TRANSCRIBE_VERSION=v2.0.1` to install a specific release.
 
 ### Build from source
 
