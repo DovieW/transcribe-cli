@@ -70,12 +70,13 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
     const [viewerDocument, setViewerDocument] = createSignal<TranscriptDocument | null>(null)
     const [viewerRunId, setViewerRunId] = createSignal<string | null>(null)
     const [viewerNotice, setViewerNotice] = createSignal("")
+    const [runNotice, setRunNotice] = createSignal("")
     const [selectedSource, setSelectedSource] = createSignal<SourceRecord | null>(null)
     const [selectedRun, setSelectedRun] = createSignal<RunRecord | null>(null)
     const sources = createMemo(() => { sourcesVersion(); return library.listSources() })
     const runs = createMemo(() => { sourcesVersion(); const source = selectedSource(); return source ? library.listRunsForSource(source.id) : [] })
 
-    const go = (next: Screen) => { setError(""); setMenuQuery(""); setPathQuery(""); if (next !== "compare-result") setViewerQuery(""); setScreen(next) }
+    const go = (next: Screen) => { setError(""); setRunNotice(""); setMenuQuery(""); setPathQuery(""); if (next !== "compare-result") setViewerQuery(""); setScreen(next) }
     const fail = (reason: unknown) => setError((reason as Error).message || String(reason))
     const showFailure = (reason: unknown, returnTo: Screen) => {
       messageReturn = returnTo
@@ -435,13 +436,22 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
 
       <Show when={screen() === "sources"}><Menu title="library · sources" items={sources().length ? sources().map((source) => ({ name: source.title, description: `${source.kind} · ${library.listRunsForSource(source.id).length} run(s)`, value: source.id })) : options([["No sources yet", "Create a transcription first", "none"]])} select={(option) => { if (option.value === "none") return; setSelectedSource(library.requireSource(String(option.value))); go("runs") }}/></Show>
       <Show when={screen() === "runs"}><Menu title={`library · ${selectedSource()?.title || "runs"}`} items={runs().length ? runs().map((run) => ({ name: run.name, description: `${run.status} · ${run.provider}/${run.model}`, value: run.id })) : options([["No runs", "This source has no runs", "none"]])} select={(option) => { if (option.value === "none") return; setSelectedRun(library.requireRun(String(option.value))); go("run") }}/></Show>
-      <Show when={screen() === "run" && selectedRun()}><Menu title={selectedRun()?.name || "run"} subtitle={`${selectedRun()?.status} · ${selectedRun()?.provider}/${selectedRun()?.model}`} items={options([
-        ["View transcript", "Read-only TXT viewer", "view"], ["Resume", "Continue incomplete chunks", "resume"], ["Restart", "Restart transcription and retain shared audio", "restart"],
+      <Show when={screen() === "run" && selectedRun()}><Menu title={selectedRun()?.name || "run"} subtitle={`${selectedRun()?.status} · ${selectedRun()?.provider}/${selectedRun()?.model}${runNotice() ? `\n${runNotice()}` : ""}`} items={options([
+        ["View transcript", "Read-only TXT viewer", "view"], ["Copy transcript", "Copy entire transcript to clipboard", "copy"], ["Resume", "Continue incomplete chunks", "resume"], ["Restart", "Restart transcription and retain shared audio", "restart"],
         ["Duplicate settings", "Create a separately named run", "duplicate"], ["Export TXT", "Copy transcript to a chosen path", "export-txt"], ["Export JSON", "Copy structured transcript", "export-json"],
         ["Rename", "Change display name", "rename"], ["Delete permanently", "Requires exact run-name confirmation", "delete"], ["Back", "Return to runs", "back"],
       ])} select={(option) => {
         const run = selectedRun()!
         if (option.value === "view") { try { openRunViewer(run, "run") } catch (reason) { fail(reason) } }
+        else if (option.value === "copy") {
+          setError(""); setRunNotice("")
+          try {
+            const path = join(run.artifactDir, "transcript.txt")
+            if (!existsSync(path)) throw new Error("Transcript is not available yet.")
+            if (!renderer.copyToClipboardOSC52(readFileSync(path, "utf8"))) throw new Error("This terminal did not accept clipboard copy.")
+            setRunNotice("Transcript copied to clipboard.")
+          } catch (reason) { fail(reason) }
+        }
         else if (option.value === "resume" || option.value === "restart") { go("active"); const runner = createRunner(library, setJobEvent); activeRunner = runner; void (option.value === "restart" ? runner.restart(run.id) : runner.run(run.id)).then((value) => { activeRunner = null; setSelectedRun(value); setSourcesVersion((v) => v + 1); go("run") }).catch((reason) => { activeRunner = null; showFailure(reason, "run") }) }
         else if (["duplicate", "rename", "delete", "export-txt", "export-json"].includes(String(option.value))) { editingKey = null; setMessage(String(option.value)); go("setting-input") }
         else go("runs")

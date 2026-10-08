@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -63,6 +63,23 @@ describe("TUI navigation", () => {
     setup.mockInput.pressEnter()
     await setup.flush()
     expect(setup.captureCharFrame()).toContain("View transcript")
+
+    const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true)
+    await setup.mockInput.typeText("copy transcript")
+    await setup.flush()
+    setup.mockInput.pressEnter()
+    await setup.flush()
+    expect(copy).toHaveBeenCalledWith("A transcript worth reading.\n")
+    expect(setup.captureCharFrame()).toContain("Transcript copied to clipboard.")
+    copy.mockReturnValue(false)
+    setup.mockInput.pressEnter()
+    await setup.flush()
+    expect(setup.captureCharFrame()).toContain("This terminal did not accept clipboard copy.")
+    expect(setup.captureCharFrame()).not.toContain("Transcript copied to clipboard.")
+    copy.mockRestore()
+    setup.mockInput.pressEscape()
+    await Bun.sleep(75)
+    await setup.flush()
 
     setup.mockInput.pressEnter()
     await setup.flush()

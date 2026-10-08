@@ -23,7 +23,7 @@ remain supported and override saved credentials.
 - Resumable chunked jobs with retries and configurable concurrency
 - OpenAI speaker diarization
 - Named alternate runs and AI-assisted transcript comparison
-- Searchable viewer, OSC 52 clipboard copy, and `$EDITOR` handoff
+- Copy transcript from the run menu; searchable viewer, OSC 52 clipboard copy, and `$EDITOR` handoff
 - TXT and structured JSON exports
 - Private XDG storage with portable manifests beside every run
 

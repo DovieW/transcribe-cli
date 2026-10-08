@@ -1,6 +1,6 @@
 {
   "name": "transcribe-cli",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "A resumable terminal transcription library for local media and YouTube",
   "private": true,
   "type": "module",
