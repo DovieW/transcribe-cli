@@ -177,7 +177,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
     }
 
     const settingRows = (): SelectOption[] => options([
-      ["Provider", settings.provider, "provider"], ["Model", settings.diarize ? "gpt-4o-transcribe-diarize" : settings.model, "model"],
+      ["Provider", settings.provider, "provider"], ["Model", settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model, "model"],
       ["Language", settings.language, "language"], ["Diarization", settings.diarize ? "on" : "off", "diarize"],
       ["YouTube subtitle cleanup", settings.cleanup ? "on" : "off", "cleanup"], ["Prompt", settings.prompt || "none", "prompt"],
       ["Chunk seconds", String(settings.chunkSeconds), "chunkSeconds"], ["Chunk overlap", String(settings.chunkOverlapSeconds), "chunkOverlapSeconds"],
@@ -193,8 +193,8 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       if (key === "model") { pickerReturn = "settings"; go("new-model"); return }
       if (["diarize", "cleanup", "keepAudio", "keepChunks"].includes(key)) {
         ;(settings as any)[key] = !(settings as any)[key]
-        if (key === "diarize" && settings.diarize) { settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize" }
-        if (key === "diarize" && !settings.diarize) settings.model = "gpt-4o-transcribe"
+        if (key === "diarize" && settings.diarize && settings.provider !== "microsoft") { settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize" }
+        if (key === "diarize" && !settings.diarize && settings.provider === "openai") settings.model = "gpt-4o-transcribe"
         setSettingsVersion((value) => value + 1); return
       }
       editingKey = key
@@ -317,23 +317,23 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
 
     return <>
       <Show when={screen() === "home"}><Menu title="home" items={options([
-        ["Quick Transcribe", `Choose a local file and start with ${settings.provider}/${settings.diarize ? "gpt-4o-transcribe-diarize" : settings.model}`, "quick"],
+        ["Quick Transcribe", `Choose a local file and start with ${settings.provider}/${settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model}`, "quick"],
         ["New transcription", "Name the run and review settings before starting", "new"], ["Library", "Browse sources and named runs", "library"],
         ["Compare transcripts", "Choose two library runs or text files", "compare"], ["Settings", "Remember provider, model, and job defaults", "settings"],
         ["Help", "Commands, keys, storage, and credentials", "help"], ["Quit", "Return to the shell", "quit"],
       ])} select={(option) => { if (option.value === "quick") go("quick-input"); else if (option.value === "new") go("new-input"); else if (option.value === "library") go("sources"); else if (option.value === "compare") go("compare-mode"); else if (option.value === "settings") { settingsReturn = "home"; go("settings") } else if (option.value === "help") go("help"); else renderer.destroy() }}/></Show>
 
-      <Show when={screen() === "quick-input"}><Menu title="quick transcribe · choose media" subtitle={`Starts immediately with ${settings.provider}/${settings.diarize ? "gpt-4o-transcribe-diarize" : settings.model} · ${settings.language}`} items={fileItems(mediaChoices(), "Enter a local media path not listed below", "Enter an exact local path…")} select={(option) => option.value === "__manual__" ? go("quick-location") : startQuick(String(option.value))}/></Show>
+      <Show when={screen() === "quick-input"}><Menu title="quick transcribe · choose media" subtitle={`Starts immediately with ${settings.provider}/${settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model} · ${settings.language}`} items={fileItems(mediaChoices(), "Enter a local media path not listed below", "Enter an exact local path…")} select={(option) => option.value === "__manual__" ? go("quick-location") : startQuick(String(option.value))}/></Show>
       <Show when={screen() === "quick-location"}><PathEntry title="quick transcribe · exact path" placeholder="local media path" extensions={MEDIA_EXTENSIONS} submit={startQuick}/></Show>
       <Show when={screen() === "new-input"}><Menu title="new transcription · media" items={fileItems(mediaChoices(), "Use this for a YouTube URL or a file not listed below")} select={(option) => option.value === "__manual__" ? go("new-location") : acceptInput(String(option.value))}/></Show>
       <Show when={screen() === "new-location"}><PathEntry title="new transcription · exact location" placeholder="path or URL" extensions={MEDIA_EXTENSIONS} submit={acceptInput} allowUrls/></Show>
       <Show when={screen() === "new-name"}><box flexDirection="column" padding={1}><Header title="name this run" subtitle={`Suggested: ${runName}`}/><input focused value={runName} onSubmit={(value) => { runName = String(value).trim(); if (!runName) return fail("Run name cannot be blank."); go("review") }}/><ErrorLine/></box></Show>
       <Show when={screen() === "new-provider"}><Menu title="provider" items={options([
-        ["OpenAI", "GPT-4o transcription models", "openai"], ["Groq", "Whisper Large v3", "groq"], ["Fireworks", "Whisper v3", "fireworks"], ["YouTube transcript", "Use existing English subtitles", "youtube-transcript"],
+        ["OpenAI", "GPT transcription models", "openai"], ["Microsoft", "MAI transcription models", "microsoft"], ["Groq", "Whisper Large v3", "groq"], ["Fireworks", "Whisper v3", "fireworks"], ["YouTube transcript", "Use existing English subtitles", "youtube-transcript"],
       ])} select={(option) => { settings.provider = option.value as Provider; settings.diarize = false; settings.model = modelsFor(settings.provider).find((model) => model.default)?.id || "youtube"; setSettingsVersion((value) => value + 1); go(pickerReturn) }}/></Show>
       <Show when={screen() === "new-model"}><Menu title="model" items={settings.provider === "youtube-transcript" ? options([["YouTube subtitles", "Use the best available English subtitles", "youtube"]]) : modelsFor(settings.provider).map((model) => ({ name: model.label, description: `${model.id}${model.diarization ? " · speaker labels" : ""}`, value: model.id }))} select={(option) => { settings.model = String(option.value); settings.diarize = settings.model === "gpt-4o-transcribe-diarize"; setSettingsVersion((value) => value + 1); go(pickerReturn) }}/></Show>
       <Show when={screen() === "review"}><Menu title="review" subtitle="Your settings are remembered. Change anything or start." items={options([
-        ["Start transcription", `${settings.provider} · ${settings.diarize ? "gpt-4o-transcribe-diarize" : settings.model} · ${settings.language}`, "start"],
+        ["Start transcription", `${settings.provider} · ${settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model} · ${settings.language}`, "start"],
         ["Change provider", settings.provider, "provider"], ["Change model", settings.model, "model"], ["All settings", "Chunking, retries, prompts, language, and artifacts", "settings"], ["Cancel", "Return home", "cancel"],
       ])} select={(option) => { if (option.value === "start") void startRuns(); else if (option.value === "provider") { pickerReturn = "review"; go("new-provider") } else if (option.value === "model") { pickerReturn = "review"; go("new-model") } else if (option.value === "settings") { settingsReturn = "review"; go("settings") } else home() }}/></Show>
 

@@ -9,6 +9,7 @@ const ENDPOINTS = {
 } as const
 
 function keyFor(provider: Settings["provider"]): string {
+  if (provider === "microsoft") return "AZURE_SPEECH_KEY"
   if (provider === "openai") return "OPENAI_API_KEY"
   if (provider === "groq") return "GROQ_API_KEY"
   if (provider === "fireworks") return "FIREWORKS_API_KEY"
@@ -23,6 +24,15 @@ export function requireCredential(provider: Settings["provider"]): string {
 }
 
 function endpoint(settings: Settings): string {
+  if (settings.provider === "microsoft") {
+    const base = process.env.AZURE_SPEECH_ENDPOINT
+    if (!base) throw new Error("AZURE_SPEECH_ENDPOINT is not set. Use your Azure Speech resource HTTPS endpoint.")
+    const url = new URL(base)
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("AZURE_SPEECH_ENDPOINT must be an HTTPS resource URL without credentials, query, or fragment.")
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/speechtotext/transcriptions:transcribe`
+    url.searchParams.set("api-version", "2025-10-15")
+    return url.toString()
+  }
   if (settings.provider === "fireworks") return settings.model === "whisper-v3"
     ? "https://audio-prod.api.fireworks.ai/v1/audio/transcriptions"
     : "https://audio-turbo.api.fireworks.ai/v1/audio/transcriptions"
@@ -42,23 +52,32 @@ function retryAfter(response: Response, fallback: number): number {
 export async function transcribeChunk(path: string, settings: Settings, continuity = "", onRetry?: (message: string) => void): Promise<ProviderResult> {
   const key = requireCredential(settings.provider)
   const model = effectiveModel(settings)
+  const url = endpoint(settings)
   let delay = settings.initialRetrySeconds
   for (let attempt = 0; attempt <= settings.maxRetries; attempt++) {
     const form = new FormData()
-    form.set("file", Bun.file(path))
-    form.set("model", model.id)
-    if (settings.provider === "openai" && model.diarization) {
-      form.set("response_format", "diarized_json")
-      form.set("chunking_strategy", "auto")
+    if (settings.provider === "microsoft") {
+      form.set("audio", Bun.file(path))
+      const definition: Record<string, unknown> = { enhancedMode: { enabled: true, model: model.id, ...(model.timestamps ? { modelOptions: { timestamps: "segment" } } : {}) } }
+      if (settings.language !== "auto") definition.locales = [settings.language]
+      if (settings.diarize) definition.diarization = { enabled: true }
+      form.set("definition", JSON.stringify(definition))
     } else {
-      form.set("response_format", settings.provider === "openai" && model.id !== "whisper-1" ? "json" : "verbose_json")
-      if (model.languageField === "languages") form.append("languages[]", settings.language)
-      else if (model.languageField === "language") form.set("language", settings.language)
-      const prompt = [settings.prompt, continuity ? `Previous transcript context:\n${continuity}` : ""].filter(Boolean).join("\n\n")
-      if (model.prompt && prompt) form.set("prompt", prompt)
+      form.set("file", Bun.file(path))
+      form.set("model", model.id)
+      if (settings.provider === "openai" && model.diarization) {
+        form.set("response_format", "diarized_json")
+        form.set("chunking_strategy", "auto")
+      } else {
+        form.set("response_format", settings.provider === "openai" && model.id !== "whisper-1" ? "json" : "verbose_json")
+        if (model.languageField === "languages") form.append("languages[]", settings.language)
+        else if (model.languageField === "language") form.set("language", settings.language)
+        const prompt = [settings.prompt, continuity ? `Previous transcript context:\n${continuity}` : ""].filter(Boolean).join("\n\n")
+        if (model.prompt && prompt) form.set("prompt", prompt)
+      }
     }
     let response: Response
-    try { response = await fetch(endpoint(settings), { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form }) }
+    try { response = await fetch(url, { method: "POST", headers: settings.provider === "microsoft" ? { "Ocp-Apim-Subscription-Key": key } : { Authorization: `Bearer ${key}` }, body: form }) }
     catch (error) {
       if (attempt >= settings.maxRetries) throw error
       onRetry?.(`Network error; retrying in ${delay}s (${attempt + 1}/${settings.maxRetries})`)
@@ -68,6 +87,15 @@ export async function transcribeChunk(path: string, settings: Settings, continui
     if (response.ok) {
       let raw: any
       try { raw = JSON.parse(body) } catch { raw = { text: body } }
+      if (settings.provider === "microsoft") {
+        const segments: Segment[] = (Array.isArray(raw.phrases) ? raw.phrases : []).map((phrase: any) => ({
+          start: Number.isFinite(phrase.offsetMilliseconds) ? phrase.offsetMilliseconds / 1000 : null,
+          end: Number.isFinite(phrase.offsetMilliseconds) && Number.isFinite(phrase.durationMilliseconds) ? (phrase.offsetMilliseconds + phrase.durationMilliseconds) / 1000 : null,
+          speaker: phrase.speaker == null ? null : String(phrase.speaker), text: String(phrase.text || "").trim(),
+        }))
+        const text = Array.isArray(raw.combinedPhrases) ? raw.combinedPhrases.map((phrase: any) => String(phrase.text || "")).join("\n").trim() : segments.map((segment) => segment.text).join(" ")
+        return { text, segments, usage: Number.isFinite(raw.durationMilliseconds) ? { durationMilliseconds: raw.durationMilliseconds } : {}, raw }
+      }
       const segments: Segment[] = Array.isArray(raw.segments) ? raw.segments.map((segment: any) => ({ start: Number.isFinite(segment.start) ? segment.start : null, end: Number.isFinite(segment.end) ? segment.end : null, speaker: segment.speaker == null ? null : String(segment.speaker), text: String(segment.text || "").trim() })) : []
       return { text: String(raw.text || body).trim(), segments, usage: raw.usage && typeof raw.usage === "object" ? raw.usage : {}, raw }
     }

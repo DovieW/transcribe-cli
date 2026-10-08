@@ -11,7 +11,7 @@ A terminal transcription workbench for local media and YouTube. `transcribe`
 combines an interactive TUI with a scriptable CLI, a resumable job engine, and
 a local SQLite library.
 
-It supports OpenAI, Groq, Fireworks AI, and existing YouTube subtitles. API
+It supports OpenAI, Microsoft MAI, Groq, Fireworks AI, and existing YouTube subtitles. API
 keys are read from the current process environment and are never saved.
 
 ## Highlights
@@ -84,14 +84,26 @@ export GROQ_API_KEY='...'
 # or OPENAI_API_KEY / FIREWORKS_API_KEY
 ```
 
-Do not put keys in this repository. Use your shell's existing secret manager
-or another local, access-controlled mechanism.
+Keep keys out of Git. For source development, Bun loads the ignored `.env`
+file automatically. The standalone binary reads the process environment; use
+your shell's secret manager or export variables before launching it.
 
-The OpenAI picker includes `gpt-4o-transcribe`,
+The OpenAI picker includes `gpt-transcribe`, `gpt-4o-transcribe`,
 `gpt-4o-mini-transcribe`, `whisper-1`, and
 `gpt-4o-transcribe-diarize`. Groq offers its Whisper Large v3 models, and
 Fireworks offers its Whisper v3 models. Availability, limits, and billing are
 controlled by each provider.
+
+Microsoft offers `MAI-Transcribe-2` (default) and `MAI-Transcribe-1.5` through
+the Azure Speech enhanced transcription API. Export `AZURE_SPEECH_KEY` and
+`AZURE_SPEECH_ENDPOINT=https://YOUR-RESOURCE.cognitiveservices.azure.com`.
+Use `--provider microsoft --model MAI-Transcribe-2`; speaker labels are
+available with `--diarize`. Use `--language auto` for automatic language
+detection or a language code such as `en`. MAI does not use the freeform prompt
+or continuity context settings. Azure resource region/model access is required.
+
+See [OpenAI file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
+and [Microsoft MAI transcription](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe).
 
 ## Use
 

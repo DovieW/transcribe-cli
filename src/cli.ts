@@ -24,10 +24,10 @@ export const HELP = `Usage:
   transcribe version
 
 Run settings:
-  --provider openai|groq|fireworks|youtube-transcript
+  --provider openai|groq|fireworks|microsoft|youtube-transcript
   --model MODEL                 Provider transcription model
   --language CODE               Remembered language hint
-  --diarize / --no-diarize      OpenAI speaker-labelled transcription
+  --diarize / --no-diarize      OpenAI or MAI-Transcribe-2 speaker labels
   --prompt TEXT                 Context or subtitle cleanup prompt
   --chunk-seconds N             Default: 900
   --chunk-overlap-seconds N     Default: 0
@@ -38,8 +38,9 @@ Run settings:
   --initial-retry-seconds N     Default: 30
   --keep-audio / --keep-chunks
 
-Credentials are read only from OPENAI_API_KEY, GROQ_API_KEY, or
-FIREWORKS_API_KEY in the current environment and are never stored.`
+Credentials are read only from OPENAI_API_KEY, GROQ_API_KEY,
+FIREWORKS_API_KEY, or AZURE_SPEECH_KEY in the current environment
+(Microsoft also requires AZURE_SPEECH_ENDPOINT) and are never stored.`
 
 function take(args: string[], index: number, flag: string): string {
   const value = args[index + 1]
@@ -61,15 +62,15 @@ function parseSettings(args: string[]): { settings: Settings, name?: string } {
     if (flag === "--prompt") { settings.prompt = take(args, index, flag); continue }
     const numbers: Record<string, keyof Settings> = { "--chunk-seconds": "chunkSeconds", "--chunk-overlap-seconds": "chunkOverlapSeconds", "--continuity-chars": "continuityChars", "--chunk-concurrency": "chunkConcurrency", "--max-upload-mb": "maxUploadMb", "--max-retries": "maxRetries", "--initial-retry-seconds": "initialRetrySeconds" }
     if (numbers[flag]) { (settings as any)[numbers[flag]!] = Number(take(args, index, flag)); continue }
-    if (flag === "--diarize") { settings.diarize = true; settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize"; args.splice(index, 1); continue }
+    if (flag === "--diarize") { settings.diarize = true; args.splice(index, 1); continue }
     if (flag === "--no-diarize") { settings.diarize = false; if (settings.model === "gpt-4o-transcribe-diarize") settings.model = "gpt-4o-transcribe"; args.splice(index, 1); continue }
     if (flag === "--keep-audio") { settings.keepAudio = true; args.splice(index, 1); continue }
     if (flag === "--keep-chunks") { settings.keepChunks = true; args.splice(index, 1); continue }
     if (flag === "--cleanup") { settings.cleanup = true; settings.provider = "youtube-transcript"; args.splice(index, 1); continue }
     throw new Error(`Unknown option: ${flag}`)
   }
-  if (settings.diarize) { settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize" }
-  else if (providerChanged && !modelChanged) settings.model = modelsFor(settings.provider).find((model) => model.default)?.id || ""
+  if (settings.diarize && settings.provider !== "microsoft") { settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize" }
+  if (providerChanged && !modelChanged && !(settings.diarize && settings.provider === "openai")) settings.model = modelsFor(settings.provider).find((model) => model.default)?.id || ""
   saveSettings(settings)
   return { settings, name }
 }
@@ -92,6 +93,8 @@ export async function runCli(argv: string[], library: Library): Promise<number> 
     const checks: Array<[string, boolean, string]> = [
       ["ffmpeg", commandExists("ffmpeg"), "install ffmpeg"], ["ffprobe", commandExists("ffprobe"), "install ffmpeg"], ["yt-dlp", commandExists("yt-dlp"), "install yt-dlp"],
       ["library", existsSync(library.root), library.root], ["OpenAI credential", Boolean(process.env.OPENAI_API_KEY), "optional; export OPENAI_API_KEY when needed"],
+      ["Microsoft credential", Boolean(process.env.AZURE_SPEECH_KEY), "optional; export AZURE_SPEECH_KEY when needed"],
+      ["Microsoft endpoint credential", Boolean(process.env.AZURE_SPEECH_ENDPOINT), "optional; export AZURE_SPEECH_ENDPOINT when needed"],
       ["Groq credential", Boolean(process.env.GROQ_API_KEY), "optional; export GROQ_API_KEY when needed"], ["Fireworks credential", Boolean(process.env.FIREWORKS_API_KEY), "optional; export FIREWORKS_API_KEY when needed"],
     ]
     for (const [name, ok, detail] of checks) console.log(`${ok ? "[OK]" : name.includes("credential") ? "[--]" : "[FAIL]"} ${name}: ${ok ? "ready" : detail}`)

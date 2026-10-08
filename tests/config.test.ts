@@ -34,7 +34,7 @@ describe("settings and model capabilities", () => {
   test("migrates legacy snake-case settings", () => {
     const settings = normalizeSettings({ provider: "openai", model: "gpt-transcribe", chunk_seconds: 200, chunk_overlap_seconds: 2, chunk_concurrency: 2 })
     expect(settings.schemaVersion).toBe(2)
-    expect(settings.model).toBe("gpt-4o-transcribe")
+    expect(settings.model).toBe("gpt-transcribe")
     expect(settings.chunkSeconds).toBe(200)
     expect(settings.chunkOverlapSeconds).toBe(2)
     expect(settings.chunkConcurrency).toBe(2)
@@ -42,9 +42,15 @@ describe("settings and model capabilities", () => {
 
   test("contains every promised OpenAI and Groq model", () => {
     expect(modelsFor("openai").map((model) => model.id)).toEqual([
-      "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1", "gpt-4o-transcribe-diarize",
+      "gpt-transcribe", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1", "gpt-4o-transcribe-diarize",
     ])
     expect(modelsFor("groq").map((model) => model.id)).toEqual(["whisper-large-v3-turbo", "whisper-large-v3"])
+  })
+
+  test("Microsoft only offers supported MAI file models", () => {
+    expect(modelsFor("microsoft").map((model) => model.id)).toEqual(["MAI-Transcribe-2", "MAI-Transcribe-1.5"])
+    expect(normalizeSettings({ provider: "microsoft" }).model).toBe("MAI-Transcribe-2")
+    expect(validateSettings(normalizeSettings({ provider: "microsoft", model: "MAI-Transcribe-1.5", diarize: true }))).toContain("Diarization requires OpenAI or Microsoft MAI-Transcribe-2.")
   })
 
   test("diarization is a first-class specialized model", () => {
@@ -84,7 +90,7 @@ describe("settings and model capabilities", () => {
     writeFileSync(legacyConfig, JSON.stringify({ provider: "openai", model: "gpt-transcribe", language: "en" }))
 
     expect(stateRoot()).toBe(legacyState)
-    expect(loadSettings().model).toBe("gpt-4o-transcribe")
+    expect(loadSettings().model).toBe("gpt-transcribe")
     expect(existsSync(configPath())).toBeTrue()
   })
 })

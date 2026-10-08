@@ -1,4 +1,4 @@
-export type Provider = "groq" | "openai" | "fireworks" | "youtube-transcript"
+export type Provider = "groq" | "openai" | "fireworks" | "microsoft" | "youtube-transcript"
 export type SourceKind = "local" | "youtube" | "playlist"
 export type RunStatus =
   | "draft"

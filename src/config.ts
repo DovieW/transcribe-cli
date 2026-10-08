@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, chmodSync, existsSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import type { Settings } from "./types"
-import { validateSettings } from "./models"
+import { modelsFor, validateSettings } from "./models"
 
 export const DEFAULT_SETTINGS: Settings = {
   schemaVersion: 2,
@@ -51,7 +51,7 @@ export function normalizeSettings(raw: Record<string, unknown> = {}): Settings {
   const legacy = (camel: string, snake: string): unknown => raw[camel] ?? raw[snake]
   const provider = String(legacy("provider", "provider") ?? DEFAULT_SETTINGS.provider) as Settings["provider"]
   let model = String(legacy("model", "model") ?? "")
-  if (!model || model === "gpt-transcribe") model = provider === "openai" ? "gpt-4o-transcribe" : provider === "fireworks" ? "whisper-v3-turbo" : "whisper-large-v3-turbo"
+  if (!model) model = modelsFor(provider).find((candidate) => candidate.default)?.id || ""
   const settings: Settings = {
     schemaVersion: 2,
     provider,
@@ -70,7 +70,7 @@ export function normalizeSettings(raw: Record<string, unknown> = {}): Settings {
     keepAudio: asBoolean(legacy("keepAudio", "keep_audio"), false),
     keepChunks: asBoolean(legacy("keepChunks", "keep_chunks"), false),
   }
-  if (settings.diarize) { settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize" }
+  if (settings.diarize && settings.provider !== "microsoft") { settings.provider = "openai"; settings.model = "gpt-4o-transcribe-diarize" }
   return settings
 }
 

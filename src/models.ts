@@ -12,10 +12,13 @@ export interface ModelCapability {
 }
 
 export const MODELS: ModelCapability[] = [
+  { provider: "openai", id: "gpt-transcribe", label: "GPT Transcribe", diarization: false, prompt: true, timestamps: false, languageField: "languages" },
   { provider: "openai", id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", diarization: false, prompt: true, timestamps: false, languageField: "language", default: true },
   { provider: "openai", id: "gpt-4o-mini-transcribe", label: "GPT-4o mini Transcribe", diarization: false, prompt: true, timestamps: false, languageField: "language" },
   { provider: "openai", id: "whisper-1", label: "Whisper 1", diarization: false, prompt: true, timestamps: true, languageField: "language" },
   { provider: "openai", id: "gpt-4o-transcribe-diarize", label: "GPT-4o Transcribe Diarize", diarization: true, prompt: false, timestamps: true, languageField: "none" },
+  { provider: "microsoft", id: "MAI-Transcribe-2", label: "MAI Transcribe 2", diarization: true, prompt: false, timestamps: true, languageField: "none", default: true },
+  { provider: "microsoft", id: "MAI-Transcribe-1.5", label: "MAI Transcribe 1.5", diarization: false, prompt: false, timestamps: false, languageField: "none" },
   { provider: "groq", id: "whisper-large-v3-turbo", label: "Whisper Large v3 Turbo", diarization: false, prompt: true, timestamps: true, languageField: "language", default: true },
   { provider: "groq", id: "whisper-large-v3", label: "Whisper Large v3", diarization: false, prompt: true, timestamps: true, languageField: "language" },
   { provider: "fireworks", id: "whisper-v3-turbo", label: "Whisper v3 Turbo", diarization: false, prompt: true, timestamps: true, languageField: "language", default: true },
@@ -28,7 +31,7 @@ export function modelsFor(provider: Provider): ModelCapability[] {
 }
 
 export function effectiveModel(settings: Settings): ModelCapability {
-  const id = settings.diarize ? "gpt-4o-transcribe-diarize" : settings.model
+  const id = settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model
   const model = MODELS.find((candidate) => candidate.provider === settings.provider && candidate.id === id)
   if (!model) throw new Error(`Unsupported ${settings.provider} model: ${id}`)
   return model
@@ -36,7 +39,7 @@ export function effectiveModel(settings: Settings): ModelCapability {
 
 export function validateSettings(settings: Settings): string[] {
   const errors: string[] = []
-  if (settings.diarize && settings.provider !== "openai") errors.push("Diarization requires OpenAI.")
+  if (settings.diarize && settings.provider !== "openai" && !(settings.provider === "microsoft" && settings.model === "MAI-Transcribe-2")) errors.push("Diarization requires OpenAI or Microsoft MAI-Transcribe-2.")
   try { effectiveModel(settings) } catch (error) { errors.push((error as Error).message) }
   for (const [name, value, minimum] of [
     ["chunk seconds", settings.chunkSeconds, 10],
