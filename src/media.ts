@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
 import { command } from "./process"
 import { expandUserPath } from "./paths"
@@ -49,7 +49,18 @@ export async function durationSeconds(path: string): Promise<number> {
   return duration
 }
 
-export async function prepareAudio(locator: string, kind: SourceKind, cacheDirectory: string): Promise<string> {
+const preparations = new Map<string, Promise<string>>()
+
+export function prepareAudio(locator: string, kind: SourceKind, cacheDirectory: string): Promise<string> {
+  const key = resolve(cacheDirectory)
+  const active = preparations.get(key)
+  if (active) return active
+  const work = prepareAudioOnce(locator, kind, key).finally(() => preparations.delete(key))
+  preparations.set(key, work)
+  return work
+}
+
+async function prepareAudioOnce(locator: string, kind: SourceKind, cacheDirectory: string): Promise<string> {
   if (kind === "local") requireMediaFile(locator)
   mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 })
   const target = join(cacheDirectory, "source.mp3")
@@ -62,7 +73,11 @@ export async function prepareAudio(locator: string, kind: SourceKind, cacheDirec
     if (!candidates[0]) throw new Error("yt-dlp completed without producing an audio file.")
     source = candidates[0]
   }
-  await command(["ffmpeg", "-v", "error", "-y", "-i", source, "-vn", "-map_metadata", "-1", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "32k", target])
+  const temporary = join(cacheDirectory, `source-${crypto.randomUUID()}.tmp.mp3`)
+  try {
+    await command(["ffmpeg", "-v", "error", "-y", "-i", source, "-vn", "-map_metadata", "-1", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "32k", temporary])
+    renameSync(temporary, target)
+  } finally { rmSync(temporary, { force: true }) }
   return target
 }
 

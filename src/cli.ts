@@ -10,7 +10,7 @@ import { createAndRun } from "./service"
 import { Library } from "./storage"
 import type { Provider, Settings } from "./types"
 
-export const VERSION = "2.1.5"
+export const VERSION = "2.2.0"
 
 export const HELP = `Usage:
   transcribe

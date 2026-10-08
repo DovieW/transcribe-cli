@@ -2,389 +2,241 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { createTranscribeApp } from "../src/tui"
+import { createTranscribeApp, type TuiDependencies } from "../src/tui"
 import { Library } from "../src/storage"
+import { normalizeSettings } from "../src/config"
+import type { RunRecord } from "../src/types"
 
-const roots: string[] = []
-function temporary(): string {
-  const path = join("/tmp", `transcribe-tui-test-${crypto.randomUUID()}`)
-  mkdirSync(path, { recursive: true })
-  roots.push(path)
-  return path
+type Setup = Awaited<ReturnType<typeof testRender>>
+const cleanup: Array<() => void> = []
+const originalConfig = process.env.XDG_CONFIG_HOME
+async function app(dependencies: TuiDependencies = {}, width = 120, height = 40) {
+  const root = `/tmp/transcribe-ui-${crypto.randomUUID()}`
+  mkdirSync(root, { recursive: true }); process.env.XDG_CONFIG_HOME = join(root, "config")
+  const library = new Library(join(root, "state"))
+  const source = library.sourceFor("local", "/tmp/example.m4a", "Example recording")
+  const run = library.createRun(source, "First pass", normalizeSettings())
+  library.writeTranscript(run, { schemaVersion: 1, runId: run.id, source, provider: run.provider, model: run.model, language: "en", text: "A transcript worth reading.", segments: [], usage: {}, createdAt: new Date().toISOString() })
+  library.updateRun(run.id, { status: "completed" })
+  const App = createTranscribeApp(library, dependencies)
+  const setup = await testRender(() => <App />, { width, height, exitOnCtrlC: false })
+  cleanup.push(() => { setup.renderer.destroy(); library.close(); rmSync(root, { recursive: true, force: true }) })
+  await setup.flush()
+  return { setup, root, library, run }
 }
+afterEach(() => { for (const close of cleanup.splice(0)) close(); process.env.XDG_CONFIG_HOME = originalConfig })
+async function choose(setup: Setup, label: string) {
+  setup.mockInput.pressKey("u", { ctrl: true }); await setup.mockInput.typeText(label); await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+}
+async function command(setup: Setup, label: string) {
+  setup.mockInput.pressKey("p", { ctrl: true }); await setup.flush(); await setup.mockInput.typeText(label); await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+}
+async function back(setup: Setup) { setup.mockInput.pressEscape(); await Bun.sleep(40); await setup.flush() }
+async function input(setup: Setup, value: string) { setup.mockInput.pressKey("u", { ctrl: true }); await setup.mockInput.typeText(value); await setup.flush() }
 
-afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
-})
-
-describe("TUI navigation", () => {
-  test("opens the library and a source without losing reactive state", async () => {
-    const root = temporary()
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    const library = new Library(join(root, "state"))
-    const source = library.sourceFor("local", "/tmp/example.m4a", "Example recording")
-    const run = library.createRun(source, "first pass", {
-      schemaVersion: 2, provider: "groq", model: "whisper-large-v3-turbo", language: "en",
-      diarize: false, cleanup: false, prompt: "", chunkSeconds: 900,
-      chunkOverlapSeconds: 0, continuityChars: 0, chunkConcurrency: 1, maxUploadMb: 24,
-      maxRetries: 10, initialRetrySeconds: 30, keepAudio: false, keepChunks: false,
-    })
-    library.updateRun(run.id, { status: "completed", completedAt: new Date().toISOString() })
-    writeFileSync(join(run.artifactDir, "transcript.txt"), "A transcript worth reading.\n")
-    writeFileSync(join(run.artifactDir, "transcript.json"), JSON.stringify({ text: "A transcript worth reading.", segments: [] }))
-
-    const App = createTranscribeApp(library)
-    const setup = await testRender(() => <App />, { width: 90, height: 30 })
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Quick Transcribe")
-    await setup.mockInput.typeText("library")
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Search › library")
-    expect(setup.captureCharFrame()).toContain("Library")
-    expect(setup.captureCharFrame()).not.toContain("New transcription")
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("library · sources")
-    expect(setup.captureCharFrame()).toContain("Example recording")
-
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("library · Example recording")
-    expect(setup.captureCharFrame()).toContain("first pass")
-
-    await setup.mockInput.typeText("no-such-run")
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("No matches")
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("first pass")
-    expect(setup.captureCharFrame()).toContain("library · Example recording")
-
-    setup.mockInput.pressEnter()
-    await setup.flush()
+describe("workbench", () => {
+  test("library preserves filtering, offers contextual actions, copies and views text", async () => {
+    const { setup } = await app()
+    await choose(setup, "library")
+    expect(setup.captureCharFrame()).toContain("Library · all runs")
+    await choose(setup, "First pass")
     expect(setup.captureCharFrame()).toContain("View transcript")
-
+    expect(setup.captureCharFrame()).not.toContain("Continue incomplete chunks")
     const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true)
-    await setup.mockInput.typeText("copy transcript")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
+    await choose(setup, "Copy transcript")
     expect(copy).toHaveBeenCalledWith("A transcript worth reading.\n")
-    expect(setup.captureCharFrame()).toContain("Transcript copied to clipboard.")
+    expect(setup.captureCharFrame()).toContain("Transcript copied to clipboard")
     copy.mockReturnValue(false)
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("This terminal did not accept clipboard copy.")
-    expect(setup.captureCharFrame()).not.toContain("Transcript copied to clipboard.")
+    setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("did not accept clipboard copy")
     copy.mockRestore()
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-
-    await setup.mockInput.typeText("export txt")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    const exportPath = join(root, "Downloads", "one.txt")
-    mkdirSync(join(root, "Downloads"))
-    writeFileSync(join(root, "Downloads", "unrelated.txt"), "existing")
-    setup.mockInput.pressKey("u", { ctrl: true })
-    await setup.mockInput.typeText(join(root, "down"))
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Use this folder")
-    expect(setup.captureCharFrame()).not.toContain("unrelated.txt")
-    expect(existsSync(exportPath)).toBe(false)
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("filename")
-    expect(setup.captureCharFrame()).toContain("first pass.txt")
-    setup.mockInput.pressKey("u", { ctrl: true })
-    await setup.mockInput.typeText("one.txt")
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(readFileSync(exportPath, "utf8")).toBe("A transcript worth reading.\n")
-    expect(setup.captureCharFrame()).toContain("Exported to")
-    expect(setup.captureCharFrame()).toContain("Downloads/")
-
-    await setup.mockInput.typeText("export json")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain("first pass.json")
-    setup.mockInput.pressKey("u", { ctrl: true })
-    await setup.mockInput.typeText("../wrong.json")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Enter a filename without folders.")
-    setup.mockInput.pressKey("u", { ctrl: true })
-    await setup.mockInput.typeText("one.json")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(JSON.parse(readFileSync(join(root, "Downloads", "one.json"), "utf8")).text).toBe("A transcript worth reading.")
-    expect(setup.captureCharFrame()).toContain("Exported to")
-
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("A transcript worth reading.")
-    await setup.mockInput.typeText("worth")
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Find › worth")
+    await choose(setup, "View transcript")
+    await setup.mockInput.typeText("worth"); await setup.flush()
     expect(setup.captureCharFrame()).toContain("1/1")
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("A transcript worth reading.")
-    expect(setup.captureCharFrame()).toContain("type to search")
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("View transcript")
-
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("library · Example recording")
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("library · sources")
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("transcribe home")
-
-    const mediaPath = join(root, "meeting-audio.m4a")
-    writeFileSync(mediaPath, "audio")
-    await setup.mockInput.typeText("new transcription")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("new transcription · media")
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("exact location")
-    await setup.mockInput.typeText(join(root, "maud"))
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("meeting-audio.m4a")
-    setup.mockInput.pressTab()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain(mediaPath)
-
-    setup.renderer.destroy()
-    library.close()
+    await back(setup); await back(setup)
+    expect(setup.captureCharFrame()).toContain("Search › View transcript")
+    await back(setup); await back(setup)
+    expect(setup.captureCharFrame()).toContain("Library · all runs")
+    expect(setup.captureCharFrame()).toContain("Search › First pass")
   })
 
-  test("review changes files, preserves the run name, and browses folders without submitting them", async () => {
-    const root = temporary(), folder = join(root, "Recordings")
-    mkdirSync(folder)
-    const first = join(folder, "first.m4a"), second = join(folder, "second.m4a")
-    writeFileSync(first, "media"); writeFileSync(second, "media")
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    const library = new Library(join(root, "state"))
-    let chosen = "", chosenName = ""
-    const App = createTranscribeApp(library, { createRuns: async (_library, input, name) => { chosen = input; chosenName = name || ""; return [] } })
-    const setup = await testRender(() => <App />, { width: 160, height: 35 })
-    await setup.flush()
-    await setup.mockInput.typeText("new transcription")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+  test("exports through the folder picker and asks before overwriting", async () => {
+    const { setup, root } = await app({}, 100, 35)
+    const folder = join(root, "Downloads"); mkdirSync(folder)
+    writeFileSync(join(folder, "one.txt"), "existing export")
+    await command(setup, "library"); await choose(setup, "First pass"); await choose(setup, "Export TXT")
+    await input(setup, root + "/down"); setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Use this folder")
+    expect(setup.captureCharFrame()).not.toContain("one.txt")
     setup.mockInput.pressEnter(); await setup.flush()
-    await setup.mockInput.typeText(root + "/rec")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain("exact location")
+    expect(setup.captureCharFrame()).toContain("First pass.txt")
+    await input(setup, "one.txt"); setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Replace existing file?")
+    expect(readFileSync(join(folder, "one.txt"), "utf8")).toBe("existing export")
+    setup.mockInput.pressArrow("down"); setup.mockInput.pressEnter(); await setup.flush()
+    expect(readFileSync(join(folder, "one.txt"), "utf8")).toBe("A transcript worth reading.\n")
+    expect(setup.captureCharFrame()).toContain("Exported to")
+    await choose(setup, "Export JSON"); setup.mockInput.pressEnter(); await setup.flush()
+    await input(setup, "../wrong.json"); setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("filename without folders")
+    await input(setup, "one.json"); setup.mockInput.pressEnter(); await setup.flush()
+    expect(JSON.parse(readFileSync(join(folder, "one.json"), "utf8")).text).toBe("A transcript worth reading.")
+    expect(JSON.parse(readFileSync(join(root, "config", "transcribe", "ui.json"), "utf8")).exportDirectory).toBe(folder)
+  })
+
+  test("setup selects files with Enter, preserves edits, and exposes advanced options", async () => {
+    const { setup, root } = await app()
+    const folder = join(root, "Recordings"); mkdirSync(folder)
+    writeFileSync(join(folder, "first.m4a"), "audio"); writeFileSync(join(folder, "second.m4a"), "audio")
+    await command(setup, "New transcription"); setup.mockInput.pressEnter(); await setup.flush()
+    await input(setup, root + "/rec"); setup.mockInput.pressEnter(); await setup.flush()
     expect(setup.captureCharFrame()).toContain("first.m4a")
-    expect(setup.captureCharFrame()).not.toContain("name this run")
-    expect(library.listRuns()).toEqual([])
-    await setup.mockInput.typeText("first")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain("name this run")
-    setup.mockInput.pressKey("u", { ctrl: true })
-    await setup.mockInput.typeText("My interview")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain(`File: ${first}`)
-    expect(setup.captureCharFrame()).toContain("Change file")
-    await setup.mockInput.typeText("change file")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
-    setup.mockInput.pressEscape(); await Bun.sleep(75); await setup.flush()
-    expect(setup.captureCharFrame()).toContain(`File: ${first}`)
-    await setup.mockInput.typeText("change file")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
-    setup.mockInput.pressEnter(); await setup.flush()
-    await setup.mockInput.typeText(folder + "/")
-    await setup.flush()
-    const secondWasHighlighted = setup.captureCharFrame().split("\n").some((line) => line.includes("▶") && line.includes("second.m4a"))
-    setup.mockInput.pressArrow("down")
-    await setup.flush()
-    if (secondWasHighlighted) { setup.mockInput.pressArrow("up"); await setup.flush() }
-    expect(setup.captureCharFrame().split("\n").find((line) => line.includes("▶"))).toContain("second.m4a")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain(`File: ${second}`)
-    expect(setup.captureCharFrame()).toContain("Start transcription")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(chosen).toBe(second)
-    expect(chosenName).toBe("My interview")
-    setup.renderer.destroy(); library.close()
-  })
-
-  test("offers Microsoft MAI models and GPT Transcribe in the settings pickers", async () => {
-    const root = temporary()
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    const library = new Library(join(root, "state"))
-    const App = createTranscribeApp(library)
-    const setup = await testRender(() => <App />, { width: 100, height: 35 })
-    await setup.flush()
-    await setup.mockInput.typeText("settings")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Microsoft")
-    await setup.mockInput.typeText("microsoft")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
+    expect(setup.captureCharFrame()).not.toContain("New transcription · setup")
+    await setup.mockInput.typeText("first"); setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("New transcription · setup")
+    await choose(setup, "Name"); await input(setup, "My run"); setup.mockInput.pressEnter(); await setup.flush()
+    await choose(setup, "Change file"); setup.mockInput.pressEnter(); await setup.flush()
+    await input(setup, join(folder, "second")); setup.mockInput.pressEnter(); await setup.flush()
+    setup.mockInput.pressKey("u", { ctrl: true }); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("My run")
+    await choose(setup, "Advanced options"); setup.mockInput.pressKey("u", { ctrl: true }); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Chunk concurrency")
+    await choose(setup, "Change provider"); await choose(setup, "Microsoft")
+    await choose(setup, "Change model")
     expect(setup.captureCharFrame()).toContain("MAI-Transcribe-2")
-    await setup.mockInput.typeText("model")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("MAI-Transcribe-2")
-    expect(setup.captureCharFrame()).toContain("MAI-Transcribe-1.5")
-    expect(setup.captureCharFrame()).not.toContain("Whisper")
-    setup.mockInput.pressEscape()
-    await Bun.sleep(75)
-    await setup.flush()
-    await setup.mockInput.typeText("provider")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    await setup.mockInput.typeText("openai")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    await setup.mockInput.typeText("model")
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
+    expect(setup.captureCharFrame()).toContain("MAI Transcribe 1.5")
+    await back(setup); await choose(setup, "Change provider"); await choose(setup, "OpenAI"); await choose(setup, "Change model")
     expect(setup.captureCharFrame()).toContain("gpt-transcribe")
-    setup.renderer.destroy()
-    library.close()
   })
 
-  test("authentication masks keys, saves them, cancels edits, and confirms removal", async () => {
-    const root = temporary()
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    const library = new Library(join(root, "state"))
-    const saved: Record<string, string> = {}
-    let writes = 0, removals = 0
-    const App = createTranscribeApp(library, { authentication: {
+  test("auth masks secrets, saves to wallet, and allows cancellation", async () => {
+    const saved: Record<string, string> = {}; let writes = 0
+    const { setup } = await app({ authentication: {
       status: async (provider) => ({ key: saved[provider] ? "system wallet" : "not configured" }),
       save: async (provider, _field, value) => { saved[provider] = value; writes++ },
-      remove: async (provider) => { delete saved[provider]; removals++ },
+      remove: async (provider) => { delete saved[provider] },
     } })
-    const setup = await testRender(() => <App />, { width: 100, height: 35 })
-    await setup.flush()
-    await setup.mockInput.typeText("authentication")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain("Microsoft MAI")
-    expect(setup.captureCharFrame()).toContain("not configured")
+    await command(setup, "Authentication"); await choose(setup, "OpenAI"); await choose(setup, "Set API key")
+    await setup.mockInput.typeText("test-secret-value"); await setup.flush()
+    expect(setup.captureCharFrame()).not.toContain("test-secret-value")
+    expect(setup.captureCharFrame()).toContain("••••")
     setup.mockInput.pressEnter(); await setup.flush()
-    setup.mockInput.pressEnter(); await setup.flush()
-    await setup.mockInput.pasteBracketedText("test-secret-api-key")
-    await setup.flush()
-    expect(setup.captureCharFrame()).not.toContain("test-secret-api-key")
-    expect(setup.captureCharFrame()).toContain("•••")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(saved.openai).toBe("test-secret-api-key")
+    expect(saved.openai).toBe("test-secret-value")
+    await choose(setup, "Set API key"); await setup.mockInput.typeText("never-save"); await back(setup)
     expect(writes).toBe(1)
-    expect(setup.captureCharFrame()).toContain("Key saved in the system wallet")
-    setup.mockInput.pressEnter(); await setup.flush()
-    await setup.mockInput.typeText("cancel-this-key")
-    setup.mockInput.pressEscape(); await Bun.sleep(75); await setup.flush()
-    expect(writes).toBe(1)
-    expect(saved.openai).toBe("test-secret-api-key")
-    expect(setup.captureCharFrame()).not.toContain("cancel-this-key")
-    await setup.mockInput.typeText("remove")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
-    expect(setup.captureCharFrame()).toContain("remove saved credentials?")
-    setup.mockInput.pressEnter(); await setup.flush()
-    expect(removals).toBe(0)
-    await setup.mockInput.typeText("remove")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
-    await setup.mockInput.typeText("remove")
-    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
-    expect(removals).toBe(1)
+    await choose(setup, "Remove saved credentials"); await choose(setup, "Remove")
     expect(saved.openai).toBeUndefined()
-    setup.renderer.destroy(); library.close()
   })
 
-  test("quick transcribe starts immediately and opens the completed transcript", async () => {
-    const root = temporary(), mediaPath = join(root, "quick-meeting.m4a")
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    writeFileSync(mediaPath, "audio")
-    const library = new Library(join(root, "state"))
-    const finish = async (reference: string) => {
-      const run = library.requireRun(reference), source = library.requireSource(run.sourceId)
-      library.writeTranscript(run, {
-        schemaVersion: 1, runId: run.id, source, provider: run.provider, model: run.model,
-        language: run.settings.language, text: "Fast transcript output.", segments: [], usage: {}, createdAt: new Date().toISOString(),
-      })
-      return library.updateRun(run.id, { status: "completed", completedAt: new Date().toISOString() })
+  test("layout resizes, plain icons persist, and mouse navigation works", async () => {
+    const { setup, root } = await app({}, 160, 50)
+    expect(setup.captureCharFrame()).toContain("WORKSPACE")
+    setup.mockInput.pressKey("F6"); await setup.flush()
+    await setup.mockMouse.click(9, 8); await setup.flush()
+    await command(setup, "Settings"); await choose(setup, "Appearance"); await choose(setup, "Icon style")
+    expect(JSON.parse(readFileSync(join(root, "config", "transcribe", "ui.json"), "utf8")).icons).toBe("plain")
+    for (const [width, height] of [[80, 24], [120, 40], [160, 50]]) {
+      setup.resize(width!, height!); await setup.flush()
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain("Appearance")
+      expect(frame).toContain("^Q quit")
+      expect(frame).not.toMatch(/[\uE000-\uF8FF]/)
+      expect(frame.split("\n").filter(Boolean).length).toBeLessThanOrEqual(height!)
     }
-    const App = createTranscribeApp(library, {
+    setup.resize(80, 24); await setup.flush()
+    await setup.mockMouse.click(14, 2); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Library · all runs")
+  })
+
+  test("multiple jobs run while browsing and completion never steals focus", async () => {
+    const tasks = new Map<string, (run: RunRecord) => void>()
+    let library: Library
+    const { setup, root, library: target } = await app({
       requireCredential: () => "test-key",
-      createRuns: async (target, input, name, settings) => {
-        const source = target.sourceFor("local", input, "quick-meeting.m4a")
-        return [target.createRun(source, name || "quick meeting", settings)]
+      createRuns: async (target, location, name, settings) => [target.createRun(target.sourceFor("local", location, location), name!, settings)],
+      createRunner: (_library, notify) => {
+        let id = ""
+        const run = (reference: string) => { id = reference; _library.updateRun(id, { status: "transcribing" }); notify({ type: "chunk", message: "Uploading", completed: 0, total: 1 }); return new Promise<RunRecord>((resolve) => tasks.set(id, resolve)) }
+        return { run, restart: run, requestPause: () => { tasks.get(id)?.(_library.updateRun(id, { status: "paused" })) } }
       },
-      createRunner: () => ({ requestPause: () => {}, run: finish, restart: finish }),
     })
-    const setup = await testRender(() => <App />, { width: 100, height: 30 })
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    expect(setup.captureCharFrame()).toContain("quick transcribe · choose media")
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    await setup.mockInput.typeText(mediaPath)
-    setup.mockInput.pressEnter()
-    await setup.waitForFrame((frame) => frame.includes("Fast transcript output."))
-    expect(setup.captureCharFrame()).toContain("quick-meeting — whisper-large-v3-turbo")
-    expect(setup.captureCharFrame()).toContain("groq/whisper-large-v3-turbo")
-    expect(library.listRuns()).toHaveLength(1)
-
-    setup.renderer.destroy()
-    library.close()
+    library = target
+    for (const name of ["a", "b", "c"]) {
+      const path = join(root, name + ".wav"); writeFileSync(path, "audio")
+      await command(setup, "Quick Transcribe"); setup.mockInput.pressEnter(); await setup.flush()
+      await input(setup, path); setup.mockInput.pressEnter(); await setup.flush()
+    }
+    expect(tasks.size).toBe(3)
+    expect(setup.captureCharFrame()).toContain("3 active")
+    await command(setup, "Library")
+    const id = [...tasks.keys()][1]!
+    tasks.get(id)!(library.updateRun(id, { status: "completed" })); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Library · all runs")
+    expect(setup.captureCharFrame()).toContain("2 active")
+    setup.mockInput.pressKey("c", { ctrl: true }); await setup.flush()
+    expect(library.listRuns().filter((run) => run.status === "paused")).toHaveLength(2)
+    expect(setup.captureCharFrame()).toContain("0 active")
   })
 
-  test("quick transcribe reports a missing credential before creating a run", async () => {
-    const root = temporary(), mediaPath = join(root, "needs-key.m4a")
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    writeFileSync(mediaPath, "audio")
-    const library = new Library(join(root, "state"))
-    let createCount = 0
-    const App = createTranscribeApp(library, {
-      requireCredential: () => { throw new Error("GROQ_API_KEY is not set. Export it for this shell and try again; transcribe never stores API keys.") },
-      createRuns: async () => { createCount++; return [] },
-    })
-    const setup = await testRender(() => <App />, { width: 100, height: 30 })
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    setup.mockInput.pressEnter()
-    await setup.flush()
-    await setup.mockInput.typeText(mediaPath)
-    setup.mockInput.pressEnter()
-    await setup.flush()
-
-    const frame = setup.captureCharFrame()
-    expect(frame).toContain("GROQ_API_KEY is not set")
-    expect(frame).toContain("quick transcribe · exact path")
-    expect(frame).not.toContain("transcribe message")
-    expect(createCount).toBe(0)
-    expect(library.listRuns()).toHaveLength(0)
-
-    setup.renderer.destroy()
-    library.close()
+  test("quick transcribe opens its result only while still viewing that job", async () => {
+    const { setup, root, library } = await app({ requireCredential: () => "test-key", createRunner: (library) => {
+      const finish = async (reference: string) => {
+        const run = library.requireRun(reference), source = library.requireSource(run.sourceId)
+        library.writeTranscript(run, { schemaVersion: 1, runId: run.id, source, provider: run.provider, model: run.model, language: "en", text: "Fast transcript output.", segments: [], usage: {}, createdAt: "" })
+        return library.updateRun(reference, { status: "completed" })
+      }
+      return { run: finish, restart: finish, requestPause: () => {} }
+    } })
+    const path = join(root, "audio.wav"); writeFileSync(path, "audio")
+    await choose(setup, "Quick Transcribe"); setup.mockInput.pressEnter(); await setup.flush()
+    await input(setup, path); setup.mockInput.pressEnter(); await setup.waitForFrame((frame) => frame.includes("Fast transcript output."))
+    expect(library.listRuns()).toHaveLength(2)
   })
+})
+
+test("quit with active jobs waits until the requests settle", async () => {
+  let finish!: (run: RunRecord) => void
+  let paused = false, running: RunRecord | undefined
+  const { setup, root, library } = await app({ requireCredential: () => "test-key", createRunner: (target) => {
+    const run = (id: string) => { running = target.requireRun(id); return new Promise<RunRecord>((resolve) => { finish = resolve }) }
+    return { run, restart: run, requestPause: () => { paused = true } }
+  } })
+  const path = join(root, "quit.wav"); writeFileSync(path, "audio")
+  await choose(setup, "Quick Transcribe"); setup.mockInput.pressEnter(); await setup.flush()
+  await input(setup, path); setup.mockInput.pressEnter(); await setup.flush()
+  setup.mockInput.pressKey("q", { ctrl: true }); await setup.flush()
+  expect(setup.captureCharFrame()).toContain("Quit while jobs are active?")
+  setup.mockInput.pressArrow("down"); setup.mockInput.pressEnter(); await setup.flush()
+  expect(paused).toBe(true)
+  expect(setup.captureCharFrame()).toContain("Waiting for active requests")
+  finish(library.updateRun(running!.id, { status: "paused" }))
+  await setup.flush()
+  expect(library.requireRun(running!.id).status).toBe("paused")
+})
+
+test("sidebar keyboard navigation and clicking a run action use the correct pane", async () => {
+  const { setup } = await app({}, 140, 35)
+  setup.mockInput.pressKey("F6", { shift: true }); await setup.flush()
+  setup.mockInput.pressArrow("down"); setup.mockInput.pressArrow("down"); setup.mockInput.pressEnter(); await setup.flush()
+  expect(setup.captureCharFrame()).toContain("Library · all runs")
+  const clickLabel = async (label: string) => {
+    const lines = setup.captureCharFrame().split("\n")
+    const y = lines.findIndex((line) => line.indexOf(label) > 24)
+    expect(y).toBeGreaterThan(0)
+    await setup.mockMouse.click(lines[y]!.indexOf(label) + 2, y); await setup.flush()
+  }
+  await clickLabel("First pass")
+  expect(setup.captureCharFrame()).toContain("View transcript")
+  await clickLabel("View transcript")
+  expect(setup.captureCharFrame()).toContain("A transcript worth reading.")
+})
+
+test("pasting an absolute media path replaces the remembered folder", async () => {
+  const { setup, root } = await app()
+  const path = join(root, "meeting notes.wav"); writeFileSync(path, "audio")
+  await command(setup, "New transcription"); setup.mockInput.pressEnter(); await setup.flush()
+  await setup.mockInput.pasteBracketedText(path)
+  setup.mockInput.pressEnter(); await setup.flush()
+  expect(setup.captureCharFrame()).toContain("New transcription · setup")
+  expect(setup.captureCharFrame()).toContain("meeting notes")
 })

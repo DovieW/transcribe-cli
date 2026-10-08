@@ -15,7 +15,7 @@ export interface JobEvent {
 export class JobRunner {
   private pauseRequested = false
   private forceRequested = false
-  constructor(private library: Library, private notify: (event: JobEvent) => void = () => {}) {}
+  constructor(private library: Library, private notify: (event: JobEvent) => void = () => {}, private options: { handleSignals?: boolean } = {}) {}
 
   requestPause(force = false): void {
     this.pauseRequested = true
@@ -37,20 +37,21 @@ export class JobRunner {
     this.forceRequested = false
     const signal = () => this.requestPause()
     const forceSignal = () => this.requestPause(true)
-    process.once("SIGINT", signal)
-    process.once("SIGTERM", forceSignal)
+    if (this.options.handleSignals !== false) { process.once("SIGINT", signal); process.once("SIGTERM", forceSignal) }
     try {
       run = this.library.updateRun(run.id, { status: "preparing", error: null })
       this.notify({ type: "status", message: `Preparing ${source.title}` })
       if (run.provider === "youtube-transcript") return await this.runSubtitles(run)
       const cache = join(this.library.root, "sources", source.id, "cache")
       const audio = await prepareAudio(source.locator, source.kind, cache)
+      if (this.pauseRequested) return this.library.updateRun(run.id, { status: "paused" })
       let chunks = this.library.listChunks(run.id)
       if (!chunks.length) {
         const plan = await createChunks(audio, join(run.artifactDir, "chunks"), run.settings)
         this.library.setChunks(run.id, plan)
         chunks = this.library.listChunks(run.id)
       }
+      if (this.pauseRequested) return this.library.updateRun(run.id, { status: "paused" })
       run = this.library.updateRun(run.id, { status: "transcribing" })
       const pending = chunks.filter((chunk) => chunk.status !== "completed")
       const concurrency = run.settings.continuityChars > 0 ? 1 : Math.max(1, run.settings.chunkConcurrency)
@@ -114,7 +115,9 @@ export class JobRunner {
     if (source.kind === "local" || source.kind === "playlist") throw new Error("YouTube subtitle mode requires a video URL.")
     mkdirSync(run.artifactDir, { recursive: true, mode: 0o700 })
     let text = await downloadYoutubeSubtitles(source.locator, join(run.artifactDir, "subtitles"))
+    if (this.pauseRequested) return this.library.updateRun(run.id, { status: "paused" })
     if (run.settings.cleanup) text = await cleanupTranscript(text, run.settings.prompt)
+    if (this.pauseRequested) return this.library.updateRun(run.id, { status: "paused" })
     const document: TranscriptDocument = { schemaVersion: 1, runId: run.id, source: { id: source.id, kind: source.kind, locator: source.locator, title: source.title }, provider: "youtube-transcript", model: run.settings.cleanup ? "gpt-5.4-nano" : "youtube", language: run.settings.language, text, segments: [], usage: {}, createdAt: new Date().toISOString() }
     this.library.writeTranscript(run, document)
     const completed = this.library.updateRun(run.id, { status: "completed", completedAt: new Date().toISOString() })

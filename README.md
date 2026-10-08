@@ -17,7 +17,8 @@ remain supported and override saved credentials.
 
 ## Highlights
 
-- Interactive fuzzy-search TUI and a noninteractive CLI
+- Responsive workbench with Nerd Font icons, searchable actions, remembered navigation, and a noninteractive CLI
+- Simultaneous transcription runs with independent progress and pause controls
 - Local audio/video, individual YouTube videos, and playlists
 - File picker: Enter selects the highlighted file or opens a folder; review lets you change the file
 - Resumable chunked jobs with retries and configurable concurrency
@@ -77,6 +78,37 @@ install -Dm755 dist/transcribe ~/.local/bin/transcribe
 
 After compilation, the `transcribe` executable does not require npm, Node.js,
 or Bun.
+
+## Workbench
+
+The TUI keeps navigation on the left and shows a details or transcript preview pane
+on wide terminals. Narrow terminals use a compact navigation bar and one content
+pane. FiraCode Nerd Font Mono (or another Nerd Font) supplies the icons; select
+**Settings → Appearance → Icon style** for plain symbols.
+
+Type to filter the focused list. **Ctrl-P** opens the action palette, **F6** and
+**Shift-F6** change panes, **F1** opens help, and **Esc** clears a list search or
+goes back. Search and selection are remembered when you return. Mouse selection
+and scrolling work alongside keyboard navigation. **Ctrl-Q** quits safely.
+
+**New transcription** opens a file picker followed by one setup screen for the
+run name, provider, model, language, speaker labels, and advanced options.
+**Quick Transcribe** starts a local file with remembered defaults. **Library**
+shows all runs with status filtering and an optional source-grouped view.
+
+Runs continue while you browse, copy, export, or start more runs. There is no
+app-level concurrency cap; each run retains its chunk concurrency and provider
+retry settings. **Jobs** shows independent progress and pause controls.
+**Ctrl-C** pauses all active runs; when idle it quits. Quitting with active runs
+asks whether to pause them and waits for current work to settle before closing.
+Jobs run inside the app, not as a detached service; interrupted runs can be
+resumed manually from Library.
+
+The pickers support **Ctrl-H** for Home, **Ctrl-D** for Downloads, **Ctrl-B** for
+the parent folder, and **Tab** completion. Exports select a folder, then a
+filename; existing files require confirmation before replacement. Appearance,
+last-used folders, and the preferred library view are stored in `ui.json` beside
+`config.json`. Provider credentials remain in the system wallet.
 
 ## Configure a provider
 
