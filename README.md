@@ -19,6 +19,7 @@ remain supported and override saved credentials.
 
 - Interactive fuzzy-search TUI and a noninteractive CLI
 - Local audio/video, individual YouTube videos, and playlists
+- File picker: Enter selects the highlighted file or opens a folder; review lets you change the file
 - Resumable chunked jobs with retries and configurable concurrency
 - OpenAI speaker diarization
 - Named alternate runs and AI-assisted transcript comparison

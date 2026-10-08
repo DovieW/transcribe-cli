@@ -8,10 +8,16 @@ import type { Settings, SourceKind } from "./types"
 export interface InputInfo { kind: SourceKind, locator: string, title: string, fingerprint: string | null, playlistId?: string }
 export interface PlaylistEntry { position: number, locator: string, title: string, videoId: string }
 
+export function requireMediaFile(input: string): string {
+  const locator = resolve(expandUserPath(input))
+  if (!existsSync(locator)) throw new Error(`Media file not found: ${locator}`)
+  if (!statSync(locator).isFile()) throw new Error(`Choose a media file, not a directory or device: ${locator}`)
+  return locator
+}
+
 export async function inspectInput(input: string): Promise<InputInfo> {
   if (!/^https?:\/\//i.test(input)) {
-    const locator = resolve(expandUserPath(input))
-    if (!existsSync(locator)) throw new Error(`Media file not found: ${locator}`)
+    const locator = requireMediaFile(input)
     const stat = statSync(locator)
     const fingerprint = createHash("sha256").update(`${locator}\0${stat.size}\0${stat.mtimeMs}`).digest("hex")
     return { kind: "local", locator, title: basename(locator), fingerprint }
@@ -44,6 +50,7 @@ export async function durationSeconds(path: string): Promise<number> {
 }
 
 export async function prepareAudio(locator: string, kind: SourceKind, cacheDirectory: string): Promise<string> {
+  if (kind === "local") requireMediaFile(locator)
   mkdirSync(cacheDirectory, { recursive: true, mode: 0o700 })
   const target = join(cacheDirectory, "source.mp3")
   if (existsSync(target) && statSync(target).size > 0) return target

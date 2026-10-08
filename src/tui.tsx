@@ -1,9 +1,10 @@
+import { requireMediaFile } from "./media"
 import { authentication, AUTH_PROVIDERS, type Authentication, type AuthProvider, type AuthStatus } from "./auth"
 import { render, useKeyboard, usePaste, useRenderer } from "@opentui/solid"
 import type { InputRenderable, ScrollBoxRenderable, SelectOption, SelectRenderable } from "@opentui/core"
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
-import { existsSync, readFileSync } from "node:fs"
-import { basename, join } from "node:path"
+import { existsSync, readFileSync, statSync } from "node:fs"
+import { basename, join, resolve, sep } from "node:path"
 import { configPath, loadSettings, saveSettings, stateRoot } from "./config"
 import { discoverFiles, MEDIA_EXTENSIONS, TEXT_EXTENSIONS, type FileChoice } from "./files"
 import { fuzzyOptions } from "./fuzzy"
@@ -35,6 +36,7 @@ export interface TuiDependencies {
 export function createTranscribeApp(library: Library, dependencies: TuiDependencies = {}) {
   let settings = loadSettings()
   let input = "", runName = ""
+  let mediaReturn: Screen = "home"
   let compareA = "", compareB = "", editingKey: keyof Settings | null = null
   let activeRunner: TuiRunner | null = null
   let settingsReturn: Screen = "home", pickerReturn: Screen = "settings"
@@ -85,7 +87,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
     const back = () => {
       if (authBusy() && screen().startsWith("auth")) return
       const parent: Partial<Record<Screen, Screen>> = {
-        "quick-input": "home", "quick-location": "quick-input", "new-input": "home", "new-location": "new-input", "new-name": "new-input", "new-provider": pickerReturn, "new-model": pickerReturn,
+        "quick-input": "home", "quick-location": "quick-input", "new-input": mediaReturn, "new-location": "new-input", "new-name": "new-input", "new-provider": pickerReturn, "new-model": pickerReturn,
         review: "new-name", sources: "home", runs: "sources", run: selectedSource() ? "runs" : "home",
         "compare-mode": "home", "compare-source": "compare-mode", "compare-runs": "compare-source",
         "compare-external-a": "compare-mode", "compare-external-a-input": "compare-external-a",
@@ -170,10 +172,13 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
     }
 
     const acceptInput = (value: string) => {
-      input = value.trim()
-      if (!input) return fail("Input cannot be blank.")
-      runName = suggestedRunName(input, settings)
-      go("new-name")
+      const nextInput = value.trim()
+      if (!nextInput) return fail("Input cannot be blank.")
+      try { if (!/^https?:\/\//i.test(nextInput)) requireMediaFile(nextInput) } catch (reason) { return fail(reason) }
+      const automaticName = !runName || runName === suggestedRunName(input, settings)
+      input = nextInput
+      if (mediaReturn !== "review" || automaticName) runName = suggestedRunName(input, settings)
+      go(mediaReturn === "review" ? "review" : "new-name")
     }
 
     const prepareViewer = (title: string, text: string, run: RunRecord | null, document: TranscriptDocument | null, returnTo: Screen) => {
@@ -222,7 +227,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       const location = expandUserPath(value.trim())
       if (!location) return fail("Choose a media file.")
       if (/^https?:\/\//i.test(location)) return fail("Quick Transcribe accepts a local media file. Use New transcription for URLs.")
-      if (!existsSync(location)) return fail(`Media file not found: ${location}`)
+      try { requireMediaFile(location) } catch (reason) { return fail(reason) }
       if (settings.provider === "youtube-transcript") return fail("Quick Transcribe requires an audio provider. Change the remembered provider in Settings.")
       try { await requireCredentialFor(settings.provider) } catch (reason) { return fail(reason) }
       input = location
@@ -306,13 +311,27 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         setPathQuery(String(selected.value))
         field?.focus()
       }
+      const submitPath = (value: string) => {
+        try {
+          const path = resolve(expandUserPath(value.trim()))
+          if (!/^https?:\/\//i.test(value) && existsSync(path) && statSync(path).isDirectory()) {
+            setError(""); setPathQuery(`${path}${sep}`); field?.focus(); return
+          }
+          props.submit(value)
+        } catch (reason) { fail(reason) }
+      }
+      const acceptSelectedPath = () => {
+        const selected = picker?.getSelectedOption()
+        submitPath(selected && selected.value !== "__none__" ? String(selected.value) : pathQuery())
+      }
       useKeyboard((key) => {
+        if (["return", "enter"].includes(key.name)) { acceptSelectedPath(); key.preventDefault(); key.stopPropagation(); return }
         if (key.ctrl && key.name === "u") { setPathQuery(""); key.preventDefault(); return }
         if (key.name === "tab") { complete(); key.preventDefault(); return }
         if (["down", "arrowdown"].includes(key.name)) { picker?.moveDown(); key.preventDefault(); return }
         if (["up", "arrowup"].includes(key.name)) { picker?.moveUp(); key.preventDefault() }
       })
-      return <box flexDirection="column" width="100%" height="100%" padding={1}><Header title={props.title} subtitle={`Type or paste a ${props.allowUrls ? "path/URL" : "local path"}  Tab completes  ↑/↓ suggestions  Enter accepts`}/><ErrorLine/><box border borderColor={blue} height={3} paddingLeft={1} paddingRight={1}><input ref={(value) => field = value} focused width="100%" value={pathQuery()} placeholder={props.placeholder} onInput={setPathQuery} onSubmit={(value) => props.submit(String(value))}/></box><box border borderColor="#30363d" backgroundColor={panel} padding={1} flexGrow={1}><select ref={(value) => picker = value} width="100%" height="100%" options={suggestionOptions()} wrapSelection showDescription onSelect={(_, option) => { if (option?.value && option.value !== "__none__") { setPathQuery(String(option.value)); field?.focus() } }}/></box></box>
+      return <box flexDirection="column" width="100%" height="100%" padding={1}><Header title={props.title} subtitle={`Type or paste a ${props.allowUrls ? "path/URL" : "local path"}  Tab completes  ↑/↓ highlight  Enter selects file or opens folder`}/><ErrorLine/><box border borderColor={blue} height={3} paddingLeft={1} paddingRight={1}><input ref={(value) => field = value} focused width="100%" value={pathQuery()} placeholder={props.placeholder} onInput={setPathQuery} onSubmit={acceptSelectedPath}/></box><box border borderColor="#30363d" backgroundColor={panel} padding={1} flexGrow={1}><select ref={(value) => picker = value} width="100%" height="100%" options={suggestionOptions()} wrapSelection showDescription onSelect={(_, option) => { if (option?.value && option.value !== "__none__") { setPathQuery(String(option.value)); field?.focus() } }}/></box></box>
     }
 
     const openViewerEditor = async () => {
@@ -386,7 +405,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         ["New transcription", "Name the run and review settings before starting", "new"], ["Library", "Browse sources and named runs", "library"],
         ["Authentication", "Manage API keys in the system wallet", "auth"], ["Compare transcripts", "Choose two library runs or text files", "compare"], ["Settings", "Remember provider, model, and job defaults", "settings"],
         ["Help", "Commands, keys, storage, and credentials", "help"], ["Quit", "Return to the shell", "quit"],
-      ])} select={(option) => { if (option.value === "quick") go("quick-input"); else if (option.value === "new") go("new-input"); else if (option.value === "library") go("sources"); else if (option.value === "auth") openAuth("home"); else if (option.value === "compare") go("compare-mode"); else if (option.value === "settings") { settingsReturn = "home"; go("settings") } else if (option.value === "help") go("help"); else renderer.destroy() }}/></Show>
+      ])} select={(option) => { if (option.value === "quick") go("quick-input"); else if (option.value === "new") { mediaReturn = "home"; go("new-input") } else if (option.value === "library") go("sources"); else if (option.value === "auth") openAuth("home"); else if (option.value === "compare") go("compare-mode"); else if (option.value === "settings") { settingsReturn = "home"; go("settings") } else if (option.value === "help") go("help"); else renderer.destroy() }}/></Show>
 
       <Show when={screen() === "auth"}><Menu title="authentication" subtitle={authBusy() ? "Reading system wallet… unlock it if prompted." : "Environment variables override saved keys. Select a provider to configure it."} items={AUTH_PROVIDERS.map((provider) => ({ name: provider.label, description: `API key: ${authStatuses()[provider.id]?.key || "not loaded"}`, value: provider.id }))} select={(option) => { if (authBusy()) return; setAuthProvider(option.value as AuthProvider); setAuthNotice(""); go("auth-provider") }}/></Show>
       <Show when={screen() === "auth-provider"}><Menu title={`authentication · ${AUTH_PROVIDERS.find((provider) => provider.id === authProvider())!.label}`} subtitle={`${authNotice() ? authNotice() + " " : ""}Active API key: ${authStatuses()[authProvider()]?.key || "not loaded"}. Environment variables take precedence.`} items={options([
@@ -407,10 +426,10 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         ["OpenAI", "GPT transcription models", "openai"], ["Microsoft", "MAI transcription models", "microsoft"], ["Groq", "Whisper Large v3", "groq"], ["Fireworks", "Whisper v3", "fireworks"], ["YouTube transcript", "Use existing English subtitles", "youtube-transcript"],
       ])} select={(option) => { settings.provider = option.value as Provider; settings.diarize = false; settings.model = modelsFor(settings.provider).find((model) => model.default)?.id || "youtube"; setSettingsVersion((value) => value + 1); go(pickerReturn) }}/></Show>
       <Show when={screen() === "new-model"}><Menu title="model" items={settings.provider === "youtube-transcript" ? options([["YouTube subtitles", "Use the best available English subtitles", "youtube"]]) : modelsFor(settings.provider).map((model) => ({ name: model.label, description: `${model.id}${model.diarization ? " · speaker labels" : ""}`, value: model.id }))} select={(option) => { settings.model = String(option.value); settings.diarize = settings.model === "gpt-4o-transcribe-diarize"; setSettingsVersion((value) => value + 1); go(pickerReturn) }}/></Show>
-      <Show when={screen() === "review"}><Menu title="review" subtitle="Your settings are remembered. Change anything or start." items={options([
+      <Show when={screen() === "review"}><Menu title="review" subtitle={`File: ${input}`} items={options([
         ["Start transcription", `${settings.provider} · ${settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model} · ${settings.language}`, "start"],
-        ["Change provider", settings.provider, "provider"], ["Change model", settings.model, "model"], ["All settings", "Chunking, retries, prompts, language, and artifacts", "settings"], ["Cancel", "Return home", "cancel"],
-      ])} select={(option) => { if (option.value === "start") void startRuns(); else if (option.value === "provider") { pickerReturn = "review"; go("new-provider") } else if (option.value === "model") { pickerReturn = "review"; go("new-model") } else if (option.value === "settings") { settingsReturn = "review"; go("settings") } else home() }}/></Show>
+        ["Change file", input, "file"], ["Change provider", settings.provider, "provider"], ["Change model", settings.model, "model"], ["All settings", "Chunking, retries, prompts, language, and artifacts", "settings"], ["Cancel", "Return home", "cancel"],
+      ])} select={(option) => { if (option.value === "start") void startRuns(); else if (option.value === "file") { mediaReturn = "review"; mediaCache = null; go("new-input") } else if (option.value === "provider") { pickerReturn = "review"; go("new-provider") } else if (option.value === "model") { pickerReturn = "review"; go("new-model") } else if (option.value === "settings") { settingsReturn = "review"; go("settings") } else home() }}/></Show>
 
       <Show when={screen() === "active"}><box flexDirection="column" padding={1}><Header title="active run" subtitle="Ctrl-C requests a safe pause after active chunk requests finish"/><box border borderColor={blue} padding={1} flexDirection="column"><text fg={green}>{jobEvent()?.message || "Starting…"}</text><Show when={jobEvent()?.total}><text>{jobEvent()?.completed || 0}/{jobEvent()?.total} chunks completed</text></Show><Show when={selectedRun()}><text fg={muted}>{selectedRun()?.name}</text></Show></box></box></Show>
 
