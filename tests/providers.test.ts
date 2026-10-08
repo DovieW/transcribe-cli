@@ -71,6 +71,26 @@ describe("provider requests", () => {
     expect(form!.get("prompt")).toBeNull()
   })
 
+  test("explains unsupported MAI resources without disabling enhanced mode or retrying", async () => {
+    process.env.AZURE_SPEECH_KEY = "test-key"
+    process.env.AZURE_SPEECH_ENDPOINT = "https://example.cognitiveservices.azure.com"
+    let calls = 0
+    globalThis.fetch = (async (_input: any, init: any) => {
+      calls++
+      expect(JSON.parse(init.body.get("definition")).enhancedMode).toMatchObject({ enabled: true, model: "MAI-Transcribe-2" })
+      return Response.json({ code: "InvalidRequest", message: "Enhanced mode with model is currently not supported yet." }, { status: 400 })
+    }) as any
+    await expect(transcribeChunk(audio, normalizeSettings({ provider: "microsoft" }))).rejects.toThrow("MAI requires enhanced mode, which is already enabled.")
+    expect(calls).toBe(1)
+  })
+
+  test("reports Microsoft top-level errors without misclassifying other failures", async () => {
+    process.env.AZURE_SPEECH_KEY = "test-key"
+    process.env.AZURE_SPEECH_ENDPOINT = "https://example.cognitiveservices.azure.com"
+    globalThis.fetch = (async () => Response.json({ code: "InvalidRequest", message: "Invalid audio format" }, { status: 400 })) as any
+    await expect(transcribeChunk(audio, normalizeSettings({ provider: "microsoft" }))).rejects.toThrow("microsoft returned HTTP 400: Invalid audio format")
+  })
+
   test("requires the Microsoft resource endpoint before uploading", async () => {
     process.env.AZURE_SPEECH_KEY = "test-key"
     delete process.env.AZURE_SPEECH_ENDPOINT

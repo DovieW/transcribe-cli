@@ -122,6 +122,14 @@ available with `--diarize`. Use `--language auto` for automatic language
 detection or a language code such as `en`. MAI does not use the freeform prompt
 or continuity context settings. Azure resource region/model access is required.
 
+MAI requires enhanced mode; the CLI always enables it. If Azure returns
+`Enhanced mode with model is currently not supported yet`, check the resource
+region and use the Speech endpoint from that resource's **Keys and Endpoint**.
+Create a separate resource in a [supported LLM Speech region](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions#llm-speech)
+(for example East US), then update both its key and endpoint in Authentication.
+Environment variables override saved credentials, so update or unset any older
+`AZURE_SPEECH_KEY` and `AZURE_SPEECH_ENDPOINT` values too.
+
 See [OpenAI file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
 and [Microsoft MAI transcription](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/mai-transcribe).
 

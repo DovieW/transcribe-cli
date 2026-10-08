@@ -87,7 +87,13 @@ export async function transcribeChunk(path: string, settings: Settings, continui
       return { text: String(raw.text || body).trim(), segments, usage: raw.usage && typeof raw.usage === "object" ? raw.usage : {}, raw }
     }
     let message = body
-    try { message = JSON.parse(body).error?.message || message } catch {}
+    try {
+      const error = JSON.parse(body)
+      message = error.error?.message || error.message || message
+    } catch {}
+    if (settings.provider === "microsoft" && response.status === 400 && /enhanced mode.*not supported|region.*(?:doesn't|does not|not).*support.*(?:LLM|MAI)/i.test(message)) {
+      throw new Error(`Microsoft cannot use ${model.id} with this resource: ${message}\nMAI requires enhanced mode, which is already enabled. Check the resource region and Speech endpoint. Use a resource in a supported region (for example East US), then save its matching key and Speech endpoint in Authentication → Microsoft MAI. Environment variables override saved credentials. Region availability: https://learn.microsoft.com/en-us/azure/ai-services/speech-service/regions#llm-speech`)
+    }
     if (attempt >= settings.maxRetries || ![408, 409, 429, 500, 502, 503, 504].includes(response.status)) throw new Error(`${settings.provider} returned HTTP ${response.status}: ${message}`)
     const wait = retryAfter(response, delay)
     onRetry?.(`HTTP ${response.status}; retrying in ${wait}s (${attempt + 1}/${settings.maxRetries})`)
