@@ -24,6 +24,7 @@ remain supported and override saved credentials.
 - OpenAI speaker diarization
 - Named alternate runs and AI-assisted transcript comparison
 - Copy transcript from the run menu; searchable viewer, OSC 52 clipboard copy, and `$EDITOR` handoff
+- TXT and JSON exports browse folders, then prompt for a filename and confirm the saved path
 - TXT and structured JSON exports
 - Private XDG storage with portable manifests beside every run
 

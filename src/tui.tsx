@@ -17,7 +17,7 @@ import { Library } from "./storage"
 import type { Provider, RunRecord, Settings, SourceRecord, TranscriptDocument } from "./types"
 import { findTextMatches, formatTranscript, viewerMetadata } from "./viewer"
 
-type Screen = "auth" | "auth-provider" | "auth-key" | "auth-endpoint" | "auth-remove" | "home" | "quick-input" | "quick-location" | "new-input" | "new-location" | "new-name" | "new-provider" | "new-model" | "review" | "active" | "sources" | "runs" | "run" | "compare-mode" | "compare-source" | "compare-runs" | "compare-external-a" | "compare-external-a-input" | "compare-external-b" | "compare-external-b-input" | "compare-result" | "settings" | "setting-input" | "help" | "message"
+type Screen = "auth" | "auth-provider" | "auth-key" | "auth-endpoint" | "auth-remove" | "home" | "quick-input" | "quick-location" | "new-input" | "new-location" | "new-name" | "new-provider" | "new-model" | "review" | "active" | "sources" | "runs" | "run" | "compare-mode" | "compare-source" | "compare-runs" | "compare-external-a" | "compare-external-a-input" | "compare-external-b" | "compare-external-b-input" | "compare-result" | "settings" | "setting-input" | "export-folder" | "export-name" | "help" | "message"
 
 const blue = "#58a6ff", green = "#7ee787", muted = "#8b949e", red = "#ff7b72", panel = "#161b22"
 
@@ -37,6 +37,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
   let settings = loadSettings()
   let input = "", runName = ""
   let mediaReturn: Screen = "home"
+  let exportFolder = process.env.HOME || process.cwd(), exportFormat: "txt" | "json" = "txt"
   let compareA = "", compareB = "", editingKey: keyof Settings | null = null
   let activeRunner: TuiRunner | null = null
   let settingsReturn: Screen = "home", pickerReturn: Screen = "settings"
@@ -95,7 +96,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         "compare-external-b": "compare-external-a", "compare-external-b-input": "compare-external-b",
         "compare-result": viewerReturn, settings: settingsReturn, "setting-input": editingKey ? "settings" : "run",
         auth: authReturn, "auth-provider": "auth", "auth-key": "auth-provider", "auth-endpoint": "auth-provider", "auth-remove": "auth-provider",
-        help: "home", message: messageReturn,
+        "export-folder": "run", "export-name": "export-folder", help: "home", message: messageReturn,
       }
       const current = screen(), target = parent[current] || "home"
       if (current === "compare-runs") setCompareSelected([])
@@ -300,15 +301,22 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       return <box flexDirection="column" width="100%" height="100%" padding={1}><Header title={props.title} subtitle={props.subtitle || "Type to fuzzy-find  ↑/↓ navigate  Enter select  Esc clear/back"}/><ErrorLine/><box flexDirection="row" height={2} paddingLeft={1}><text fg={blue}>Search › </text><text>{menuQuery() || "type to filter…"}</text></box><box border borderColor="#30363d" backgroundColor={panel} padding={1} flexGrow={1}><select focused width="100%" height="100%" options={visible()} wrapSelection showDescription onSelect={(_, option) => option && option.value !== "__no_match__" && props.select(option)} /></box></box>
     }
 
-    const PathEntry = (props: { title: string, placeholder: string, extensions: string[], submit: (value: string) => void, allowUrls?: boolean }) => {
+    const PathEntry = (props: { title: string, placeholder: string, extensions: string[], submit: (value: string) => void, allowUrls?: boolean, directoriesOnly?: boolean, initialValue?: string }) => {
+      if (props.initialValue) setPathQuery(props.initialValue)
       let picker: SelectRenderable | undefined, field: InputRenderable | undefined
-      const suggestions = createMemo(() => pathSuggestions(pathQuery(), props.extensions))
-      const suggestionOptions = createMemo(() => suggestions().length
-        ? suggestions().map((item) => ({ name: item.name, description: item.description, value: item.path }))
-        : options([["No path suggestions", props.allowUrls ? "Keep typing, paste a path or URL, or press Esc" : "Keep typing, paste a local path, or press Esc", "__none__"]]))
+      const suggestions = createMemo(() => pathSuggestions(pathQuery(), props.extensions).filter((item) => !props.directoriesOnly || item.directory))
+      const currentFolder = createMemo(() => {
+        const path = resolve(expandUserPath(pathQuery().trim() || "."))
+        return existsSync(path) && statSync(path).isDirectory() ? path : null
+      })
+      const suggestionOptions = createMemo(() => [
+        ...(props.directoriesOnly && currentFolder() ? options([["Use this folder", currentFolder()!, "__use_folder__"]]) : []),
+        ...(suggestions().length ? suggestions().map((item) => ({ name: item.name, description: item.description, value: item.path }))
+        : options([["No path suggestions", props.allowUrls ? "Keep typing, paste a path or URL, or press Esc" : "Keep typing, paste a local path, or press Esc", "__none__"]])),
+      ])
       const complete = () => {
         const selected = picker?.getSelectedOption()
-        if (!selected || selected.value === "__none__") return
+        if (!selected || ["__none__", "__use_folder__"].includes(String(selected.value))) return
         setPathQuery(String(selected.value))
         field?.focus()
       }
@@ -323,6 +331,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       }
       const acceptSelectedPath = () => {
         const selected = picker?.getSelectedOption()
+        if (selected?.value === "__use_folder__") { props.submit(currentFolder()!); return }
         submitPath(selected && selected.value !== "__none__" ? String(selected.value) : pathQuery())
       }
       useKeyboard((key) => {
@@ -332,7 +341,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         if (["down", "arrowdown"].includes(key.name)) { picker?.moveDown(); key.preventDefault(); return }
         if (["up", "arrowup"].includes(key.name)) { picker?.moveUp(); key.preventDefault() }
       })
-      return <box flexDirection="column" width="100%" height="100%" padding={1}><Header title={props.title} subtitle={`Type or paste a ${props.allowUrls ? "path/URL" : "local path"}  Tab completes  ↑/↓ highlight  Enter selects file or opens folder`}/><ErrorLine/><box border borderColor={blue} height={3} paddingLeft={1} paddingRight={1}><input ref={(value) => field = value} focused width="100%" value={pathQuery()} placeholder={props.placeholder} onInput={setPathQuery} onSubmit={acceptSelectedPath}/></box><box border borderColor="#30363d" backgroundColor={panel} padding={1} flexGrow={1}><select ref={(value) => picker = value} width="100%" height="100%" options={suggestionOptions()} wrapSelection showDescription onSelect={(_, option) => { if (option?.value && option.value !== "__none__") { setPathQuery(String(option.value)); field?.focus() } }}/></box></box>
+      return <box flexDirection="column" width="100%" height="100%" padding={1}><Header title={props.title} subtitle={`Type or paste a ${props.allowUrls ? "path/URL" : "local path"}  Tab completes  ↑/↓ highlight  ${props.directoriesOnly ? "Enter opens folder or chooses Use this folder" : "Enter selects file or opens folder"}`}/><ErrorLine/><box border borderColor={blue} height={3} paddingLeft={1} paddingRight={1}><input ref={(value) => field = value} focused width="100%" value={pathQuery()} placeholder={props.placeholder} onInput={setPathQuery} onSubmit={acceptSelectedPath}/></box><box border borderColor="#30363d" backgroundColor={panel} padding={1} flexGrow={1}><select ref={(value) => picker = value} width="100%" height="100%" options={suggestionOptions()} wrapSelection showDescription onSelect={(_, option) => { if (option?.value && !["__none__", "__use_folder__"].includes(String(option.value))) { setPathQuery(String(option.value)); field?.focus() } }}/></box></box>
     }
 
     const openViewerEditor = async () => {
@@ -453,9 +462,26 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
           } catch (reason) { fail(reason) }
         }
         else if (option.value === "resume" || option.value === "restart") { go("active"); const runner = createRunner(library, setJobEvent); activeRunner = runner; void (option.value === "restart" ? runner.restart(run.id) : runner.run(run.id)).then((value) => { activeRunner = null; setSelectedRun(value); setSourcesVersion((v) => v + 1); go("run") }).catch((reason) => { activeRunner = null; showFailure(reason, "run") }) }
-        else if (["duplicate", "rename", "delete", "export-txt", "export-json"].includes(String(option.value))) { editingKey = null; setMessage(String(option.value)); go("setting-input") }
+        else if (option.value === "export-txt" || option.value === "export-json") { exportFormat = option.value === "export-txt" ? "txt" : "json"; go("export-folder") }
+        else if (["duplicate", "rename", "delete"].includes(String(option.value))) { editingKey = null; setMessage(String(option.value)); go("setting-input") }
         else go("runs")
       }}/></Show>
+
+      <Show when={screen() === "export-folder"}><PathEntry title={`export ${exportFormat.toUpperCase()} · choose folder`} placeholder="folder path" extensions={[]} directoriesOnly initialValue={`${exportFolder}${sep}`} submit={(value) => {
+        try {
+          const folder = resolve(expandUserPath(value.trim()))
+          if (!existsSync(folder) || !statSync(folder).isDirectory()) throw new Error("Choose an existing folder for export.")
+          exportFolder = folder; go("export-name")
+        } catch (reason) { fail(reason) }
+      }}/></Show>
+      <Show when={screen() === "export-name"}><box flexDirection="column" padding={1}><Header title={`export ${exportFormat.toUpperCase()} · filename`} subtitle={`Folder: ${exportFolder}`}/><text fg={muted}>Enter a filename and press Enter to export. Esc changes the folder.</text><input focused value={`${selectedRun()!.name.replace(/[\\/]/g, "-")}.${exportFormat}`} onSubmit={(submitted) => {
+        try {
+          const name = String(submitted).trim()
+          if (!name || name === "." || name === ".." || /[\\/]/.test(name)) throw new Error("Enter a filename without folders.")
+          const destination = library.exportRun(selectedRun()!.id, exportFormat, join(exportFolder, name))
+          go("run"); setRunNotice(`Exported to ${destination}`)
+        } catch (reason) { fail(reason) }
+      }}/><ErrorLine/></box></Show>
 
       <Show when={screen() === "settings"}><Menu title="settings" subtitle="Every value below is visible, editable, and persisted only when saved." items={(settingsVersion(), settingRows())} select={(option) => editSetting(option.value as keyof Settings | "done" | "auth")}/></Show>
       <Show when={screen() === "setting-input"}><box flexDirection="column" padding={1}><Header title={editingKey ? `edit ${String(editingKey)}` : message()} subtitle={message() === "delete" ? `Type exactly: ${selectedRun()?.name}` : "Enter a value and press Enter"}/><input focused value={editingKey ? String((settings as any)[editingKey] ?? "") : ""} onSubmit={(submitted) => {
@@ -463,11 +489,6 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
           const value = String(submitted)
           if (editingKey) return submitSetting(value)
           const action = message(), run = selectedRun()!
-          if (action === "export-txt" || action === "export-json") {
-            const destination = library.exportRun(run.id, action === "export-txt" ? "txt" : "json", value)
-            go("run"); setRunNotice(`Exported to ${destination}`)
-            return
-          }
           if (action === "duplicate") setSelectedRun(library.duplicateRun(run.id, value))
           else if (action === "rename") setSelectedRun(library.updateRun(run.id, { name: value }))
           else if (action === "delete") { if (value !== run.name) throw new Error("Confirmation did not match the run name."); library.deleteRun(run.id); setSelectedRun(null); setSourcesVersion((v) => v + 1); return go("sources") }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { testRender } from "@opentui/solid"
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createTranscribeApp } from "../src/tui"
 import { Library } from "../src/storage"
@@ -31,6 +31,7 @@ describe("TUI navigation", () => {
     })
     library.updateRun(run.id, { status: "completed", completedAt: new Date().toISOString() })
     writeFileSync(join(run.artifactDir, "transcript.txt"), "A transcript worth reading.\n")
+    writeFileSync(join(run.artifactDir, "transcript.json"), JSON.stringify({ text: "A transcript worth reading.", segments: [] }))
 
     const App = createTranscribeApp(library)
     const setup = await testRender(() => <App />, { width: 90, height: 30 })
@@ -86,12 +87,41 @@ describe("TUI navigation", () => {
     setup.mockInput.pressEnter()
     await setup.flush()
     const exportPath = join(root, "Downloads", "one.txt")
-    await setup.mockInput.typeText(exportPath)
+    mkdirSync(join(root, "Downloads"))
+    writeFileSync(join(root, "Downloads", "unrelated.txt"), "existing")
+    setup.mockInput.pressKey("u", { ctrl: true })
+    await setup.mockInput.typeText(join(root, "down"))
+    await setup.flush()
+    setup.mockInput.pressEnter()
+    await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Use this folder")
+    expect(setup.captureCharFrame()).not.toContain("unrelated.txt")
+    expect(existsSync(exportPath)).toBe(false)
+    setup.mockInput.pressEnter()
+    await setup.flush()
+    expect(setup.captureCharFrame()).toContain("filename")
+    expect(setup.captureCharFrame()).toContain("first pass.txt")
+    setup.mockInput.pressKey("u", { ctrl: true })
+    await setup.mockInput.typeText("one.txt")
     setup.mockInput.pressEnter()
     await setup.flush()
     expect(readFileSync(exportPath, "utf8")).toBe("A transcript worth reading.\n")
     expect(setup.captureCharFrame()).toContain("Exported to")
     expect(setup.captureCharFrame()).toContain("Downloads/")
+
+    await setup.mockInput.typeText("export json")
+    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+    setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("first pass.json")
+    setup.mockInput.pressKey("u", { ctrl: true })
+    await setup.mockInput.typeText("../wrong.json")
+    setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Enter a filename without folders.")
+    setup.mockInput.pressKey("u", { ctrl: true })
+    await setup.mockInput.typeText("one.json")
+    setup.mockInput.pressEnter(); await setup.flush()
+    expect(JSON.parse(readFileSync(join(root, "Downloads", "one.json"), "utf8")).text).toBe("A transcript worth reading.")
+    expect(setup.captureCharFrame()).toContain("Exported to")
 
     setup.mockInput.pressEnter()
     await setup.flush()
