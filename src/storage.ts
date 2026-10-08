@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import { normalizeSettings, stateRoot } from "./config"
+import { expandUserPath } from "./paths"
 import type { ChunkRecord, RunRecord, RunStatus, Settings, SourceKind, SourceRecord, TranscriptDocument } from "./types"
 
 function now(): string { return new Date().toISOString() }
@@ -221,7 +222,9 @@ export class Library {
     if (run.status !== "completed") throw new Error(`Run is ${run.status}, not completed.`)
     const source = join(run.artifactDir, `transcript.${format}`)
     if (!existsSync(source)) throw new Error(`Artifact is missing: ${source}`)
-    const destination = resolve(output)
+    if (!output.trim()) throw new Error("Enter an export file path.")
+    const destination = resolve(expandUserPath(output.trim()))
+    if (existsSync(destination) && statSync(destination).isDirectory()) throw new Error("Choose a file path for export, not a directory.")
     mkdirSync(dirname(destination), { recursive: true })
     copyFileSync(source, destination)
     return destination

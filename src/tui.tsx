@@ -463,11 +463,14 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
           const value = String(submitted)
           if (editingKey) return submitSetting(value)
           const action = message(), run = selectedRun()!
+          if (action === "export-txt" || action === "export-json") {
+            const destination = library.exportRun(run.id, action === "export-txt" ? "txt" : "json", value)
+            go("run"); setRunNotice(`Exported to ${destination}`)
+            return
+          }
           if (action === "duplicate") setSelectedRun(library.duplicateRun(run.id, value))
           else if (action === "rename") setSelectedRun(library.updateRun(run.id, { name: value }))
           else if (action === "delete") { if (value !== run.name) throw new Error("Confirmation did not match the run name."); library.deleteRun(run.id); setSelectedRun(null); setSourcesVersion((v) => v + 1); return go("sources") }
-          else if (action === "export-txt") library.exportRun(run.id, "txt", value)
-          else if (action === "export-json") library.exportRun(run.id, "json", value)
           setSourcesVersion((v) => v + 1); go("run")
         } catch (reason) { fail(reason) }
       }}/><ErrorLine/></box></Show>

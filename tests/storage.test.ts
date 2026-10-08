@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { normalizeSettings } from "../src/config"
 import { nextAvailableRunName } from "../src/service"
@@ -10,6 +10,27 @@ function temporary(): string { const path = join("/tmp", `transcribe-test-${cryp
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
 describe("library", () => {
+  test("exports TXT and JSON to home paths and rejects empty paths or directories", () => {
+    const root = temporary(), home = process.env.HOME
+    const library = new Library(join(root, "state"))
+    const source = library.sourceFor("local", "/tmp/example.m4a", "Example")
+    const run = library.createRun(source, "export", normalizeSettings())
+    library.updateRun(run.id, { status: "completed" })
+    writeFileSync(join(run.artifactDir, "transcript.txt"), "hello\n")
+    writeFileSync(join(run.artifactDir, "transcript.json"), JSON.stringify({ text: "hello" }))
+    process.env.HOME = join(root, "home")
+    try {
+      for (const format of ["txt", "json"] as const) {
+        const destination = join(root, "home", "Downloads", `one.${format}`)
+        expect(library.exportRun(run.id, format, ` ~/Downloads/one.${format} `)).toBe(destination)
+        expect(readFileSync(destination, "utf8")).toBe(readFileSync(join(run.artifactDir, `transcript.${format}`), "utf8"))
+      }
+      expect(existsSync(join(root, "~"))).toBe(false)
+      expect(() => library.exportRun(run.id, "txt", "  ")).toThrow("Enter an export file path.")
+      expect(() => library.exportRun(run.id, "txt", "~/Downloads")).toThrow("not a directory")
+    } finally { process.env.HOME = home; library.close() }
+  })
+
   test("chooses a stable suffix for repeated quick runs", () => {
     expect(nextAvailableRunName("meeting — gpt-4o-transcribe", ["meeting — gpt-4o-transcribe", "meeting — gpt-4o-transcribe (2)"])).toBe("meeting — gpt-4o-transcribe (3)")
   })

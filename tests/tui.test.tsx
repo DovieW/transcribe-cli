@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { testRender } from "@opentui/solid"
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createTranscribeApp } from "../src/tui"
 import { Library } from "../src/storage"
@@ -80,6 +80,18 @@ describe("TUI navigation", () => {
     setup.mockInput.pressEscape()
     await Bun.sleep(75)
     await setup.flush()
+
+    await setup.mockInput.typeText("export txt")
+    await setup.flush()
+    setup.mockInput.pressEnter()
+    await setup.flush()
+    const exportPath = join(root, "Downloads", "one.txt")
+    await setup.mockInput.typeText(exportPath)
+    setup.mockInput.pressEnter()
+    await setup.flush()
+    expect(readFileSync(exportPath, "utf8")).toBe("A transcript worth reading.\n")
+    expect(setup.captureCharFrame()).toContain("Exported to")
+    expect(setup.captureCharFrame()).toContain("Downloads/")
 
     setup.mockInput.pressEnter()
     await setup.flush()
