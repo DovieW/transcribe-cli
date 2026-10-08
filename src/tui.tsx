@@ -1,6 +1,7 @@
+import { authentication, AUTH_PROVIDERS, type Authentication, type AuthProvider, type AuthStatus } from "./auth"
 import { render, useKeyboard, usePaste, useRenderer } from "@opentui/solid"
 import type { InputRenderable, ScrollBoxRenderable, SelectOption, SelectRenderable } from "@opentui/core"
-import { createEffect, createMemo, createSignal, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import { configPath, loadSettings, saveSettings, stateRoot } from "./config"
@@ -15,7 +16,7 @@ import { Library } from "./storage"
 import type { Provider, RunRecord, Settings, SourceRecord, TranscriptDocument } from "./types"
 import { findTextMatches, formatTranscript, viewerMetadata } from "./viewer"
 
-type Screen = "home" | "quick-input" | "quick-location" | "new-input" | "new-location" | "new-name" | "new-provider" | "new-model" | "review" | "active" | "sources" | "runs" | "run" | "compare-mode" | "compare-source" | "compare-runs" | "compare-external-a" | "compare-external-a-input" | "compare-external-b" | "compare-external-b-input" | "compare-result" | "settings" | "setting-input" | "help" | "message"
+type Screen = "auth" | "auth-provider" | "auth-key" | "auth-endpoint" | "auth-remove" | "home" | "quick-input" | "quick-location" | "new-input" | "new-location" | "new-name" | "new-provider" | "new-model" | "review" | "active" | "sources" | "runs" | "run" | "compare-mode" | "compare-source" | "compare-runs" | "compare-external-a" | "compare-external-a-input" | "compare-external-b" | "compare-external-b-input" | "compare-result" | "settings" | "setting-input" | "help" | "message"
 
 const blue = "#58a6ff", green = "#7ee787", muted = "#8b949e", red = "#ff7b72", panel = "#161b22"
 
@@ -27,6 +28,7 @@ type TuiRunner = Pick<JobRunner, "requestPause" | "run" | "restart">
 export interface TuiDependencies {
   createRuns?: typeof createRuns
   createRunner?: (library: Library, notify: (event: JobEvent) => void) => TuiRunner
+  authentication?: Pick<Authentication, "status" | "save" | "remove">
   requireCredential?: (provider: Provider) => unknown
 }
 
@@ -40,10 +42,16 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
   let mediaCache: FileChoice[] | null = null, textCache: FileChoice[] | null = null
   const createRunsFor = dependencies.createRuns || createRuns
   const createRunner = dependencies.createRunner || ((target, notify) => new JobRunner(target, notify))
+  const auth = dependencies.authentication || authentication
   const requireCredentialFor = dependencies.requireCredential || requireCredential
 
   function App() {
     const renderer = useRenderer()
+    const [authProvider, setAuthProvider] = createSignal<AuthProvider>("openai")
+    const [authStatuses, setAuthStatuses] = createSignal<Partial<Record<AuthProvider, AuthStatus>>>({})
+    const [authBusy, setAuthBusy] = createSignal(false)
+    const [authNotice, setAuthNotice] = createSignal("")
+    let authReturn: Screen = "home"
     const [screen, setScreen] = createSignal<Screen>("home")
     const [message, setMessage] = createSignal("")
     const [error, setError] = createSignal("")
@@ -75,6 +83,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
     }
     const home = () => { setSelectedSource(null); setSelectedRun(null); setCompareSelected([]); go("home") }
     const back = () => {
+      if (authBusy() && screen().startsWith("auth")) return
       const parent: Partial<Record<Screen, Screen>> = {
         "quick-input": "home", "quick-location": "quick-input", "new-input": "home", "new-location": "new-input", "new-name": "new-input", "new-provider": pickerReturn, "new-model": pickerReturn,
         review: "new-name", sources: "home", runs: "sources", run: selectedSource() ? "runs" : "home",
@@ -82,6 +91,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         "compare-external-a": "compare-mode", "compare-external-a-input": "compare-external-a",
         "compare-external-b": "compare-external-a", "compare-external-b-input": "compare-external-b",
         "compare-result": viewerReturn, settings: settingsReturn, "setting-input": editingKey ? "settings" : "run",
+        auth: authReturn, "auth-provider": "auth", "auth-key": "auth-provider", "auth-endpoint": "auth-provider", "auth-remove": "auth-provider",
         help: "home", message: messageReturn,
       }
       const current = screen(), target = parent[current] || "home"
@@ -104,6 +114,60 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         } else renderer.destroy()
       }
     })
+
+    const refreshAuth = async () => {
+      setAuthBusy(true)
+      try {
+        const statuses: Partial<Record<AuthProvider, AuthStatus>> = {}
+        for (const provider of AUTH_PROVIDERS) statuses[provider.id] = await auth.status(provider.id)
+        setAuthStatuses(statuses)
+      } catch (reason) { fail(reason) }
+      finally { setAuthBusy(false) }
+    }
+    const openAuth = (returnTo: Screen) => { authReturn = returnTo; setAuthNotice(""); go("auth"); void refreshAuth() }
+    const saveAuth = async (field: "key" | "endpoint", value: string) => {
+      if (authBusy()) return
+      const provider = authProvider()
+      setAuthBusy(true)
+      try {
+        await auth.save(provider, field, value)
+        setAuthStatuses((previous) => ({ ...previous, [provider]: undefined }))
+        go("auth-provider")
+        setAuthNotice(field === "key" ? "Key saved in the system wallet." : "Endpoint saved in the system wallet.")
+        const status = await auth.status(provider)
+        setAuthStatuses((previous) => ({ ...previous, [provider]: status }))
+      } catch (reason) { fail(reason) }
+      finally { setAuthBusy(false) }
+    }
+    const removeAuth = async () => {
+      if (authBusy()) return
+      const provider = authProvider()
+      setAuthBusy(true)
+      try {
+        await auth.remove(provider)
+        go("auth-provider")
+        setAuthNotice("Saved credentials removed. Environment variables still apply.")
+        const status = await auth.status(provider)
+        setAuthStatuses((previous) => ({ ...previous, [provider]: status }))
+      } catch (reason) { fail(reason) }
+      finally { setAuthBusy(false) }
+    }
+    const SecretEntry = () => {
+      let secret = ""
+      const [length, setLength] = createSignal(0)
+      const append = (value: string) => { secret += value.replace(/[\r\n]/g, ""); setLength(secret.length) }
+      onCleanup(() => { secret = "" })
+      useKeyboard((key) => {
+        key.preventDefault(); key.stopPropagation()
+        if (authBusy()) return
+        if (key.ctrl && key.name === "u") { secret = ""; setLength(0) }
+        else if (key.name === "backspace") { secret = secret.slice(0, -1); setLength(secret.length) }
+        else if (["enter", "return"].includes(key.name)) { const value = secret; secret = ""; setLength(0); void saveAuth("key", value) }
+        else if (!key.ctrl && !key.meta && !key.option && key.sequence.length === 1 && key.sequence >= " ") append(key.sequence)
+      })
+      usePaste((event) => { event.preventDefault(); if (!authBusy()) append(new TextDecoder().decode(event.bytes)) })
+      return <box flexDirection="column" padding={1}><Header title="authentication · enter API key" subtitle="Paste or type your key · Enter saves · Backspace deletes · Ctrl-U clears · Esc cancels"/><ErrorLine/><text fg={muted}>Stored in your system wallet. Existing keys are never displayed.</text><text fg={blue}>{"•".repeat(Math.min(length(), 80)) || "Waiting for key…"}</text><Show when={authBusy()}><text>Saving… unlock your system wallet if prompted.</text></Show></box>
+    }
 
     const acceptInput = (value: string) => {
       input = value.trim()
@@ -154,13 +218,13 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       } catch (reason) { activeRunner = null; showFailure(reason, failureReturn) }
     }
 
-    const startQuick = (value: string) => {
+    const startQuick = async (value: string) => {
       const location = expandUserPath(value.trim())
       if (!location) return fail("Choose a media file.")
       if (/^https?:\/\//i.test(location)) return fail("Quick Transcribe accepts a local media file. Use New transcription for URLs.")
       if (!existsSync(location)) return fail(`Media file not found: ${location}`)
       if (settings.provider === "youtube-transcript") return fail("Quick Transcribe requires an audio provider. Change the remembered provider in Settings.")
-      try { requireCredentialFor(settings.provider) } catch (reason) { return fail(reason) }
+      try { await requireCredentialFor(settings.provider) } catch (reason) { return fail(reason) }
       input = location
       runName = suggestedRunName(location, settings)
       void startRuns(true, true, "quick-input")
@@ -184,10 +248,11 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       ["Continuity characters", String(settings.continuityChars), "continuityChars"], ["Chunk concurrency", String(settings.chunkConcurrency), "chunkConcurrency"],
       ["Maximum upload MB", String(settings.maxUploadMb), "maxUploadMb"], ["Maximum retries", String(settings.maxRetries), "maxRetries"],
       ["Initial retry seconds", String(settings.initialRetrySeconds), "initialRetrySeconds"], ["Keep audio", settings.keepAudio ? "yes" : "no", "keepAudio"],
-      ["Keep chunks", settings.keepChunks ? "yes" : "no", "keepChunks"], ["Save and return", "Persist these defaults", "done"],
+      ["Keep chunks", settings.keepChunks ? "yes" : "no", "keepChunks"], ["Authentication", "Manage saved API keys and Microsoft endpoint", "auth"], ["Save and return", "Persist these defaults", "done"],
     ])
 
-    const editSetting = (key: keyof Settings | "done") => {
+    const editSetting = (key: keyof Settings | "done" | "auth") => {
+      if (key === "auth") { openAuth("settings"); return }
       if (key === "done") { try { saveSettings(settings); go(settingsReturn) } catch (reason) { fail(reason) }; return }
       if (key === "provider") { pickerReturn = "settings"; go("new-provider"); return }
       if (key === "model") { pickerReturn = "settings"; go("new-model"); return }
@@ -319,9 +384,19 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       <Show when={screen() === "home"}><Menu title="home" items={options([
         ["Quick Transcribe", `Choose a local file and start with ${settings.provider}/${settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model}`, "quick"],
         ["New transcription", "Name the run and review settings before starting", "new"], ["Library", "Browse sources and named runs", "library"],
-        ["Compare transcripts", "Choose two library runs or text files", "compare"], ["Settings", "Remember provider, model, and job defaults", "settings"],
+        ["Authentication", "Manage API keys in the system wallet", "auth"], ["Compare transcripts", "Choose two library runs or text files", "compare"], ["Settings", "Remember provider, model, and job defaults", "settings"],
         ["Help", "Commands, keys, storage, and credentials", "help"], ["Quit", "Return to the shell", "quit"],
-      ])} select={(option) => { if (option.value === "quick") go("quick-input"); else if (option.value === "new") go("new-input"); else if (option.value === "library") go("sources"); else if (option.value === "compare") go("compare-mode"); else if (option.value === "settings") { settingsReturn = "home"; go("settings") } else if (option.value === "help") go("help"); else renderer.destroy() }}/></Show>
+      ])} select={(option) => { if (option.value === "quick") go("quick-input"); else if (option.value === "new") go("new-input"); else if (option.value === "library") go("sources"); else if (option.value === "auth") openAuth("home"); else if (option.value === "compare") go("compare-mode"); else if (option.value === "settings") { settingsReturn = "home"; go("settings") } else if (option.value === "help") go("help"); else renderer.destroy() }}/></Show>
+
+      <Show when={screen() === "auth"}><Menu title="authentication" subtitle={authBusy() ? "Reading system wallet… unlock it if prompted." : "Environment variables override saved keys. Select a provider to configure it."} items={AUTH_PROVIDERS.map((provider) => ({ name: provider.label, description: `API key: ${authStatuses()[provider.id]?.key || "not loaded"}`, value: provider.id }))} select={(option) => { if (authBusy()) return; setAuthProvider(option.value as AuthProvider); setAuthNotice(""); go("auth-provider") }}/></Show>
+      <Show when={screen() === "auth-provider"}><Menu title={`authentication · ${AUTH_PROVIDERS.find((provider) => provider.id === authProvider())!.label}`} subtitle={`${authNotice() ? authNotice() + " " : ""}Active API key: ${authStatuses()[authProvider()]?.key || "not loaded"}. Environment variables take precedence.`} items={options([
+        ["Set API key", "Save or replace a key in the system wallet", "key"],
+        ...(authProvider() === "microsoft" ? [["Set Speech endpoint", authStatuses().microsoft?.endpoint ? `${authStatuses().microsoft!.endpoint} · ${authStatuses().microsoft!.endpointSource}` : "Azure Speech resource HTTPS URL", "endpoint"] as [string, string, string]] : []),
+        ["Remove saved credentials", "Clear this provider's saved key and endpoint", "remove"], ["Back", "All providers", "back"],
+      ])} select={(option) => { if (authBusy()) return; if (option.value === "key") go("auth-key"); else if (option.value === "endpoint") go("auth-endpoint"); else if (option.value === "remove") go("auth-remove"); else go("auth") }}/></Show>
+      <Show when={screen() === "auth-key"}><SecretEntry/></Show>
+      <Show when={screen() === "auth-endpoint"}><box flexDirection="column" padding={1}><Header title="authentication · Microsoft Speech endpoint" subtitle="Use the resource HTTPS URL without a path. Enter saves; Esc cancels."/><ErrorLine/><input focused placeholder="https://YOUR-RESOURCE.cognitiveservices.azure.com" onSubmit={(value) => { void saveAuth("endpoint", String(value)) }}/><Show when={authBusy()}><text>Saving…</text></Show></box></Show>
+      <Show when={screen() === "auth-remove"}><Menu title="remove saved credentials?" subtitle="Environment variables remain available." items={options([["Cancel", "Keep saved credentials", "cancel"], ["Remove", "Clear this provider's saved key and endpoint", "remove"]])} select={(option) => { if (option.value === "remove") void removeAuth(); else if (!authBusy()) go("auth-provider") }}/></Show>
 
       <Show when={screen() === "quick-input"}><Menu title="quick transcribe · choose media" subtitle={`Starts immediately with ${settings.provider}/${settings.diarize && settings.provider === "openai" ? "gpt-4o-transcribe-diarize" : settings.model} · ${settings.language}`} items={fileItems(mediaChoices(), "Enter a local media path not listed below", "Enter an exact local path…")} select={(option) => option.value === "__manual__" ? go("quick-location") : startQuick(String(option.value))}/></Show>
       <Show when={screen() === "quick-location"}><PathEntry title="quick transcribe · exact path" placeholder="local media path" extensions={MEDIA_EXTENSIONS} submit={startQuick}/></Show>
@@ -353,7 +428,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         else go("runs")
       }}/></Show>
 
-      <Show when={screen() === "settings"}><Menu title="settings" subtitle="Every value below is visible, editable, and persisted only when saved." items={(settingsVersion(), settingRows())} select={(option) => editSetting(option.value as keyof Settings | "done")}/></Show>
+      <Show when={screen() === "settings"}><Menu title="settings" subtitle="Every value below is visible, editable, and persisted only when saved." items={(settingsVersion(), settingRows())} select={(option) => editSetting(option.value as keyof Settings | "done" | "auth")}/></Show>
       <Show when={screen() === "setting-input"}><box flexDirection="column" padding={1}><Header title={editingKey ? `edit ${String(editingKey)}` : message()} subtitle={message() === "delete" ? `Type exactly: ${selectedRun()?.name}` : "Enter a value and press Enter"}/><input focused value={editingKey ? String((settings as any)[editingKey] ?? "") : ""} onSubmit={(submitted) => {
         try {
           const value = String(submitted)
@@ -380,7 +455,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       <Show when={screen() === "compare-external-b"}><Menu title="compare · transcript B" items={fileItems(textChoices().filter((choice) => choice.path !== compareA), "Enter a text file not listed below")} select={(option) => { if (option.value === "__manual__") go("compare-external-b-input"); else { compareB = String(option.value); void compare(compareA, compareB) } }}/></Show>
       <Show when={screen() === "compare-external-b-input"}><PathEntry title="compare · transcript B · exact path" placeholder="second.txt" extensions={TEXT_EXTENSIONS} submit={(value) => { compareB = value; void compare(compareA, compareB) }}/></Show>
       <Show when={screen() === "compare-result"}><Viewer/></Show>
-      <Show when={screen() === "help"}><box flexDirection="column" padding={1}><Header title="help"/><scrollbox focused border padding={1} flexGrow={1}><text selectable>{`transcribe is a central, resumable transcription library.\n\nQuick Transcribe\n  Choose a local media file and start immediately with remembered settings.\n  The completed transcript opens directly in the viewer and remains in the library.\n\nMenus\n  Type  fuzzy-find the active menu\n  ↑/↓  move\n  Enter choose\n  Esc   clear search, then go back (quit from home)\n  Ctrl-U clear search\n  Ctrl-C quit; during jobs it requests a safe pause\n\nViewer\n  Type        search transcript\n  Enter       next match\n  Shift-Enter previous match\n  Ctrl-Y      copy entire transcript\n  Ctrl-E      open transcript in $EDITOR\n\nCredentials\n  Export OPENAI_API_KEY, GROQ_API_KEY, or FIREWORKS_API_KEY only when needed. Keys are never saved.\n\nStorage\n  Config: ${configPath()}\n  Library: ${stateRoot()}\n\nCLI\n  transcribe run INPUT --name NAME\n  transcribe resume RUN\n  transcribe restart RUN\n  transcribe compare LEFT RIGHT\n  transcribe export RUN --format txt|json --output PATH\n  transcribe doctor`}</text></scrollbox></box></Show>
+      <Show when={screen() === "help"}><box flexDirection="column" padding={1}><Header title="help"/><scrollbox focused border padding={1} flexGrow={1}><text selectable>{`transcribe is a central, resumable transcription library.\n\nQuick Transcribe\n  Choose a local media file and start immediately with remembered settings.\n  The completed transcript opens directly in the viewer and remains in the library.\n\nMenus\n  Type  fuzzy-find the active menu\n  ↑/↓  move\n  Enter choose\n  Esc   clear search, then go back (quit from home)\n  Ctrl-U clear search\n  Ctrl-C quit; during jobs it requests a safe pause\n\nViewer\n  Type        search transcript\n  Enter       next match\n  Shift-Enter previous match\n  Ctrl-Y      copy entire transcript\n  Ctrl-E      open transcript in $EDITOR\n\nCredentials\n  Use Authentication to save keys in the system wallet. Environment variables override saved keys. Microsoft also requires a Speech endpoint.\n\nStorage\n  Config: ${configPath()}\n  Library: ${stateRoot()}\n\nCLI\n  transcribe run INPUT --name NAME\n  transcribe resume RUN\n  transcribe restart RUN\n  transcribe compare LEFT RIGHT\n  transcribe export RUN --format txt|json --output PATH\n  transcribe doctor`}</text></scrollbox></box></Show>
       <Show when={screen() === "message"}><box flexDirection="column" padding={1}><Header title="message"/><ErrorLine/><text>{message()}</text><text fg={muted}>Press Esc to go back.</text></box></Show>
     </>
   }

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { authentication } from "../src/auth"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { normalizeSettings } from "../src/config"
@@ -73,7 +74,9 @@ describe("provider requests", () => {
   test("requires the Microsoft resource endpoint before uploading", async () => {
     process.env.AZURE_SPEECH_KEY = "test-key"
     delete process.env.AZURE_SPEECH_ENDPOINT
+    const read = spyOn(authentication.store, "read").mockResolvedValue({})
     await expect(transcribeChunk(audio, normalizeSettings({ provider: "microsoft" }))).rejects.toThrow("AZURE_SPEECH_ENDPOINT")
+    read.mockRestore()
   })
 
   test("uses diarized_json and automatic chunking", async () => {
@@ -84,6 +87,18 @@ describe("provider requests", () => {
     expect(form!.get("response_format")).toBe("diarized_json")
     expect(form!.get("chunking_strategy")).toBe("auto")
     expect(result.segments[0]?.speaker).toBe("A")
+  })
+
+  test("transcription and comparison use saved keys without environment variables", async () => {
+    delete process.env.OPENAI_API_KEY
+    const read = spyOn(authentication.store, "read").mockResolvedValue({ key: "test-wallet-key" })
+    const headers: string[] = []
+    globalThis.fetch = (async (_input: any, init: any) => { headers.push(init.headers.Authorization); return Response.json({ text: "hello", output_text: "Winner: Tie" }) }) as any
+    try {
+      expect((await transcribeChunk(audio, normalizeSettings({ provider: "openai" }))).text).toBe("hello")
+      expect(await compareTranscripts("a", "one", "b", "two")).toBe("Winner: Tie")
+      expect(headers).toEqual(["Bearer test-wallet-key", "Bearer test-wallet-key"])
+    } finally { read.mockRestore() }
   })
 
   test("comparison is ephemeral and uses gpt-5.6-luna", async () => {

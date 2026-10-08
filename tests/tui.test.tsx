@@ -161,6 +161,53 @@ describe("TUI navigation", () => {
     library.close()
   })
 
+  test("authentication masks keys, saves them, cancels edits, and confirms removal", async () => {
+    const root = temporary()
+    process.env.XDG_CONFIG_HOME = join(root, "config")
+    const library = new Library(join(root, "state"))
+    const saved: Record<string, string> = {}
+    let writes = 0, removals = 0
+    const App = createTranscribeApp(library, { authentication: {
+      status: async (provider) => ({ key: saved[provider] ? "system wallet" : "not configured" }),
+      save: async (provider, _field, value) => { saved[provider] = value; writes++ },
+      remove: async (provider) => { delete saved[provider]; removals++ },
+    } })
+    const setup = await testRender(() => <App />, { width: 100, height: 35 })
+    await setup.flush()
+    await setup.mockInput.typeText("authentication")
+    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("Microsoft MAI")
+    expect(setup.captureCharFrame()).toContain("not configured")
+    setup.mockInput.pressEnter(); await setup.flush()
+    setup.mockInput.pressEnter(); await setup.flush()
+    await setup.mockInput.pasteBracketedText("test-secret-api-key")
+    await setup.flush()
+    expect(setup.captureCharFrame()).not.toContain("test-secret-api-key")
+    expect(setup.captureCharFrame()).toContain("•••")
+    setup.mockInput.pressEnter(); await setup.flush()
+    expect(saved.openai).toBe("test-secret-api-key")
+    expect(writes).toBe(1)
+    expect(setup.captureCharFrame()).toContain("Key saved in the system wallet")
+    setup.mockInput.pressEnter(); await setup.flush()
+    await setup.mockInput.typeText("cancel-this-key")
+    setup.mockInput.pressEscape(); await Bun.sleep(75); await setup.flush()
+    expect(writes).toBe(1)
+    expect(saved.openai).toBe("test-secret-api-key")
+    expect(setup.captureCharFrame()).not.toContain("cancel-this-key")
+    await setup.mockInput.typeText("remove")
+    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+    expect(setup.captureCharFrame()).toContain("remove saved credentials?")
+    setup.mockInput.pressEnter(); await setup.flush()
+    expect(removals).toBe(0)
+    await setup.mockInput.typeText("remove")
+    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+    await setup.mockInput.typeText("remove")
+    await setup.flush(); setup.mockInput.pressEnter(); await setup.flush()
+    expect(removals).toBe(1)
+    expect(saved.openai).toBeUndefined()
+    setup.renderer.destroy(); library.close()
+  })
+
   test("quick transcribe starts immediately and opens the completed transcript", async () => {
     const root = temporary(), mediaPath = join(root, "quick-meeting.m4a")
     process.env.XDG_CONFIG_HOME = join(root, "config")

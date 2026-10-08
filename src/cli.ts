@@ -1,3 +1,4 @@
+import { authentication, AUTH_PROVIDERS } from "./auth"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
 import { loadSettings, saveSettings } from "./config"
@@ -9,7 +10,7 @@ import { createAndRun } from "./service"
 import { Library } from "./storage"
 import type { Provider, Settings } from "./types"
 
-export const VERSION = "2.0.1"
+export const VERSION = "2.1.0"
 
 export const HELP = `Usage:
   transcribe
@@ -38,9 +39,10 @@ Run settings:
   --initial-retry-seconds N     Default: 30
   --keep-audio / --keep-chunks
 
-Credentials are read only from OPENAI_API_KEY, GROQ_API_KEY,
-FIREWORKS_API_KEY, or AZURE_SPEECH_KEY in the current environment
-(Microsoft also requires AZURE_SPEECH_ENDPOINT) and are never stored.`
+Use Authentication in the TUI to save API keys in your system wallet.
+OPENAI_API_KEY, GROQ_API_KEY, FIREWORKS_API_KEY, and AZURE_SPEECH_KEY
+override saved credentials. Microsoft also needs AZURE_SPEECH_ENDPOINT
+or a saved Speech resource endpoint.`
 
 function take(args: string[], index: number, flag: string): string {
   const value = args[index + 1]
@@ -92,11 +94,17 @@ export async function runCli(argv: string[], library: Library): Promise<number> 
   if (command === "doctor") {
     const checks: Array<[string, boolean, string]> = [
       ["ffmpeg", commandExists("ffmpeg"), "install ffmpeg"], ["ffprobe", commandExists("ffprobe"), "install ffmpeg"], ["yt-dlp", commandExists("yt-dlp"), "install yt-dlp"],
-      ["library", existsSync(library.root), library.root], ["OpenAI credential", Boolean(process.env.OPENAI_API_KEY), "optional; export OPENAI_API_KEY when needed"],
-      ["Microsoft credential", Boolean(process.env.AZURE_SPEECH_KEY), "optional; export AZURE_SPEECH_KEY when needed"],
-      ["Microsoft endpoint credential", Boolean(process.env.AZURE_SPEECH_ENDPOINT), "optional; export AZURE_SPEECH_ENDPOINT when needed"],
-      ["Groq credential", Boolean(process.env.GROQ_API_KEY), "optional; export GROQ_API_KEY when needed"], ["Fireworks credential", Boolean(process.env.FIREWORKS_API_KEY), "optional; export FIREWORKS_API_KEY when needed"],
+      ["library", existsSync(library.root), library.root],
     ]
+    for (const provider of AUTH_PROVIDERS) {
+      try {
+        const status = await authentication.status(provider.id)
+        checks.push([`${provider.label} credential`, status.key !== "not configured", `optional; configure in Authentication or export ${provider.env}`])
+        if (provider.id === "microsoft") checks.push(["Microsoft endpoint credential", Boolean(status.endpoint), "optional; configure in Authentication or export AZURE_SPEECH_ENDPOINT"])
+      } catch {
+        checks.push([`${provider.label} credential`, Boolean(process.env[provider.env]), "wallet unavailable; unlock it, or use environment variables"])
+      }
+    }
     for (const [name, ok, detail] of checks) console.log(`${ok ? "[OK]" : name.includes("credential") ? "[--]" : "[FAIL]"} ${name}: ${ok ? "ready" : detail}`)
     return checks.some(([name, ok]) => !ok && !name.includes("credential")) ? 1 : 0
   }

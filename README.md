@@ -12,7 +12,8 @@ combines an interactive TUI with a scriptable CLI, a resumable job engine, and
 a local SQLite library.
 
 It supports OpenAI, Microsoft MAI, Groq, Fireworks AI, and existing YouTube subtitles. API
-keys are read from the current process environment and are never saved.
+keys can be saved in your system wallet using the TUI. Environment variables
+remain supported and override saved credentials.
 
 ## Highlights
 
@@ -77,7 +78,24 @@ or Bun.
 
 ## Configure a provider
 
-Export only the key for the provider you want to use:
+Open `transcribe` → **Authentication** → choose a provider → **Set API key**.
+Type or paste the key into the masked field and press Enter. Keys persist in
+KWallet on KDE, or in the desktop Secret Service on other Linux desktops.
+Microsoft also has a **Set Speech endpoint** action. Saved credentials work
+for both the TUI and CLI, including OpenAI comparison and subtitle cleanup.
+
+You can replace a saved key or remove a provider's saved credentials from this
+screen. Existing keys are never displayed. Removal leaves environment variables
+in effect. Keys are passed to the wallet through private process pipes; they
+are not written to settings, run manifests, logs, command arguments, or plaintext
+credential files. The system wallet may prompt you to unlock or grant access.
+
+KDE requires KWallet and `python3-dbus`; other Linux desktops require
+`libsecret-tools` and an active Secret Service. Without a desktop wallet
+(for example, a headless server or WSL without a secret service), use environment
+variables. There is no plaintext storage fallback.
+
+Alternatively, export the key for the provider you want to use:
 
 ```bash
 export GROQ_API_KEY='...'
@@ -85,8 +103,8 @@ export GROQ_API_KEY='...'
 ```
 
 Keep keys out of Git. For source development, Bun loads the ignored `.env`
-file automatically. The standalone binary reads the process environment; use
-your shell's secret manager or export variables before launching it.
+file automatically. The standalone binary uses saved wallet credentials and the process
+environment; exported variables take precedence.
 
 The OpenAI picker includes `gpt-transcribe`, `gpt-4o-transcribe`,
 `gpt-4o-mini-transcribe`, `whisper-1`, and
@@ -95,7 +113,8 @@ Fireworks offers its Whisper v3 models. Availability, limits, and billing are
 controlled by each provider.
 
 Microsoft offers `MAI-Transcribe-2` (default) and `MAI-Transcribe-1.5` through
-the Azure Speech enhanced transcription API. Export `AZURE_SPEECH_KEY` and
+the Azure Speech enhanced transcription API. Configure its key and endpoint
+in Authentication, or export `AZURE_SPEECH_KEY` and
 `AZURE_SPEECH_ENDPOINT=https://YOUR-RESOURCE.cognitiveservices.azure.com`.
 Use `--provider microsoft --model MAI-Transcribe-2`; speaker labels are
 available with `--diarize`. Use `--language auto` for automatic language
