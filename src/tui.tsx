@@ -1,5 +1,6 @@
 import { ChoiceList } from "./choice-list"
 import { JobController } from "./jobs"
+import { durationLabel, progressBar, runProgress } from "./progress"
 import { loadUiPreferences, saveUiPreferences } from "./ui-state"
 import { theme, icon, actionIcon, statusIcon } from "./theme"
 import { requireMediaFile } from "./media"
@@ -67,12 +68,23 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
     const [clock, setClock] = createSignal(Date.now())
     const timer = setInterval(() => setClock(Date.now()), 1000)
     const controller = new JobController((notify) => createRunner(library, notify), () => { setJobsVersion((value) => value + 1); setSourcesVersion((value) => value + 1) })
+    const initialCompleted = new Map<string, number>()
+    const jobMetrics = (id: string) => {
+      jobsVersion()
+      const entry = controller.entries.get(id)
+      const elapsed = entry ? ((entry.endedAt || clock()) - entry.startedAt) / 1000 : 0
+      const run = entry?.run || library.requireRun(id)
+      const progress = runProgress(library.listChunks(id), elapsed, initialCompleted.get(id) || 0)
+      const limit = run.settings.continuityChars > 0 ? 1 : Math.max(1, run.settings.chunkConcurrency)
+      const eta = !entry?.busy ? "—" : entry.pausing ? "paused after current requests" : progress.eta === null ? "calculating…" : progress.eta === 0 ? "finishing…" : `~${durationLabel(progress.eta)} remaining (chunks)`
+      return `${progressBar(progress.fraction)}  ${progress.completed}/${progress.total} chunks\nElapsed ${durationLabel(elapsed)} · Parallel ${entry?.busy ? progress.active : 0}/${limit}\nETA ${eta}`
+    }
     const busyJobs = () => { jobsVersion(); return controller.active }
     const aggregateProgress = () => {
       const active = busyJobs(), total = active.reduce((sum, entry) => sum + (entry.event.total || 0), 0), done = active.reduce((sum, entry) => sum + (entry.event.completed || 0), 0)
       if (!active.length) return ""
-      const filled = total ? Math.floor(done / total * 10) : 0
-      return `${active.length} active  ${total ? "[" + "━".repeat(filled) + "─".repeat(10 - filled) + "] " + done + "/" + total + " chunks" : "Preparing…"}`
+      const bar = progressBar(total ? done / total : 0)
+      return `${active.length} active  ${total ? bar + "  " + done + "/" + total + " chunks" : "Preparing…"}`
     }
     const jobRows = () => { jobsVersion(); return [...controller.entries.values()].reverse() }
     createEffect(() => { if ((dimensions().width < 100 && focus() === "nav") || (dimensions().width < 120 && focus() === "details")) setFocus("content") })
@@ -280,6 +292,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
 
     const launchRun = (run: RunRecord, restart = false, showViewer = false) => {
       const id = run.id
+      initialCompleted.set(id, restart ? 0 : library.listChunks(id).filter((chunk) => chunk.status === "completed").reduce((sum, chunk) => sum + chunk.durationSeconds, 0))
       void controller.start(run, restart).then((completed) => {
         setNotification(`${completed.name} · ${completed.status}`)
         if (selectedRun()?.id === id) setSelectedRun(completed)
@@ -384,7 +397,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       else { try { preview = readFileSync(join(run.artifactDir, "transcript.txt"), "utf8").slice(0, 5000) } catch {} previewCache.set(run.id, { updated: run.updatedAt, text: preview }) }
       jobsVersion()
       const entry = controller.entries.get(run.id)
-      const progress = entry ? `\n${entry.event.message}${entry.event.total ? ` · ${entry.event.completed || 0}/${entry.event.total} chunks` : ""}\n` : ""
+      const progress = entry ? `\n${jobMetrics(run.id)}\n${entry.event.message}\n` : ""
       return `${source.title}\n${run.provider} / ${run.model}\n${run.status} · ${run.settings.language}${progress}\n\n${source.locator}\n\n${run.error ? run.error + "\n\n" : ""}${preview}`
     }
     const Menu = (props: { title: string, subtitle?: string, items: SelectOption[], select: (option: SelectOption) => void }) => {
@@ -654,7 +667,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         if (screen() === "setup-name") runName = trimmed; else settings.language = trimmed
         setSettingsVersion((v) => v + 1); go("review")
       }}/><ErrorLine/></box></Show>
-      <Show when={screen() === "active"}><Menu title="Run progress" subtitle={selectedRun()?.name || "Creating runs…"} items={options([
+      <Show when={screen() === "active"}><Show when={selectedRun()}><box flexShrink={0} flexDirection="column" paddingBottom={1}><text fg={blue} wrapMode="word"><strong>{jobMetrics(selectedRun()!.id)}</strong></text><text fg={muted} wrapMode="word">{(jobsVersion(), controller.entries.get(selectedRun()!.id)?.event.message || "Starting…")}</text></box></Show><Menu title="Run progress" subtitle={selectedRun()?.name || "Creating runs…"} items={options([
         ...(selectedRun() ? [[controller.isActive(selectedRun()!.id) ? "Pause this run" : "Open run", (() => { jobsVersion(); return controller.entries.get(selectedRun()!.id)?.event.message || "Starting…" })(), "current"] as [string, string, string]] : []),
         ["All jobs", `${busyJobs().length} active runs`, "jobs"], ["New transcription", "Start another run while these continue", "new"], ["Library", "Browse, copy, and export", "library"],
       ])} select={(option) => {
@@ -665,9 +678,8 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         ["New transcription", "Start another run", "new"],
         ...(busyJobs().length ? [["Pause all", "Finish current work and pause each active run", "pause-all"] as [string, string, string]] : []),
         ...jobRows().map((entry): [string, string, string] => {
-          const seconds = Math.floor(((entry.endedAt || clock()) - entry.startedAt) / 1000)
           const progress = entry.event.total ? ` · ${entry.event.completed || 0}/${entry.event.total} chunks` : ""
-          return [`${glyph(statusIcon(entry.busy ? entry.pausing ? "pausing" : "transcribing" : entry.run.status))} ${entry.run.name}`, `${entry.event.message}${progress} · ${seconds}s`, entry.run.id]
+          return [`${glyph(statusIcon(entry.busy ? entry.pausing ? "pausing" : "transcribing" : entry.run.status))} ${entry.run.name}`, `${jobMetrics(entry.run.id)}\n${entry.event.message}${progress}`, entry.run.id]
         }),
         ...(!jobRows().length ? [["No jobs this session", "Your past runs are in Library", "library"] as [string, string, string]] : []),
       ])} select={(option) => {
@@ -780,7 +792,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       <Show when={screen() === "message"}><box flexDirection="column" padding={1}><Header title="Message"/><ErrorLine/><text>{message()}</text><text fg={muted}>Press Esc to go back.</text></box></Show>
         </box>
       </box>
-      <box height={3} flexShrink={0} paddingLeft={1} paddingRight={1} flexDirection="column"><text fg={notification().includes("failed") ? red : green} truncate>{busyJobs().length ? aggregateProgress() + " · Ctrl-C pauses all" : notification() || "Ready"}</text><text fg={muted} truncate>{screen().includes("location") || screen() === "export-folder" ? "Enter select · Tab complete · ^H Home · ^D Downloads · ^B parent · Esc back" : "↑↓ move · Enter choose · F6 pane · ^P actions · F1 help · Esc back · ^Q quit"}</text><Show when={shuttingDown()}><text fg={theme.amber}>Waiting for active requests to settle…</text></Show></box>
+      <box height={3} flexShrink={0} paddingLeft={1} paddingRight={1} flexDirection="column"><text fg={notification().includes("failed") ? red : blue} truncate>{busyJobs().length ? aggregateProgress() + " · Ctrl-C pauses all" : notification() || "Ready"}</text><text fg={muted} truncate>{screen().includes("location") || screen() === "export-folder" ? "Enter select · Tab complete · ^H Home · ^D Downloads · ^B parent · Esc back" : "↑↓ move · Enter choose · F6 pane · ^P actions · F1 help · Esc back · ^Q quit"}</text><Show when={shuttingDown()}><text fg={theme.amber}>Waiting for active requests to settle…</text></Show></box>
       <Show when={palette()}><CommandPalette/></Show>
       <Show when={confirmation()}><Confirmation/></Show>
     </box>

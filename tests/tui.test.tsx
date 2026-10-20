@@ -166,6 +166,10 @@ describe("workbench", () => {
       await command(setup, "Quick Transcribe"); setup.mockInput.pressEnter(); await setup.flush()
       await input(setup, path); setup.mockInput.pressEnter(); await setup.flush()
     }
+    expect(setup.captureCharFrame()).toContain("Elapsed")
+    expect(setup.captureCharFrame()).toContain("Parallel 0/1")
+    expect(setup.captureCharFrame()).toContain("ETA calculating")
+    expect(setup.captureCharFrame()).toContain("░░░░")
     expect(tasks.size).toBe(3)
     expect(setup.captureCharFrame()).toContain("3 active")
     await command(setup, "Library")
