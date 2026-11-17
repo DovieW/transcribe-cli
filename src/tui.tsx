@@ -209,6 +209,9 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       } catch (reason) { fail(reason) }
       finally { setAuthBusy(false) }
     }
+    const hasSavedKey = (status?: AuthStatus) => status?.savedKey ?? status?.key === "system wallet"
+    const hasSavedEndpoint = (status?: AuthStatus) => status?.savedEndpoint ?? status?.endpointSource === "system wallet"
+    const authSummary = (status?: AuthStatus) => !status ? "Checking credentials…" : `Saved API key: ${hasSavedKey(status) ? "yes · system wallet" : "none"}. Active source: ${status.key}.${status.key === "environment" && hasSavedKey(status) ? " Environment overrides the saved key." : ""}`
     const openAuth = (returnTo: Screen) => { authReturn = returnTo; setAuthNotice(""); go("auth"); void refreshAuth() }
     const saveAuth = async (field: "key" | "endpoint", value: string) => {
       if (authBusy()) return
@@ -217,7 +220,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       try {
         await auth.save(provider, field, value)
         setAuthStatuses((previous) => ({ ...previous, [provider]: undefined }))
-        if (screen() === "auth-key" || screen() === "auth-endpoint") go("auth-provider")
+        if (screen() === "auth-key" || screen() === "auth-endpoint") { go("auth-provider"); setMenuQuery("") }
         setAuthNotice(field === "key" ? "Key saved in the system wallet." : "Endpoint saved in the system wallet.")
         const status = await auth.status(provider)
         setAuthStatuses((previous) => ({ ...previous, [provider]: status }))
@@ -230,7 +233,7 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
       setAuthBusy(true)
       try {
         await auth.remove(provider)
-        go("auth-provider")
+        go("auth-provider"); setMenuQuery("")
         setAuthNotice("Saved credentials removed. Environment variables still apply.")
         const status = await auth.status(provider)
         setAuthStatuses((previous) => ({ ...previous, [provider]: status }))
@@ -624,11 +627,11 @@ export function createTranscribeApp(library: Library, dependencies: TuiDependenc
         ...library.listRuns().slice(0, 6).map((run): [string, string, string] => [`${glyph(statusIcon(run.status))} ${run.name}`, `${run.status} · ${run.provider}/${run.model}`, `recent:${run.id}`]),
       ])} select={(option) => { if (String(option.value).startsWith("recent:")) { runReturn = "home"; setSelectedRun(library.requireRun(String(option.value).slice(7))); go("run") } else if (option.value === "jobs") go("jobs"); else if (option.value === "quick") go("quick-input"); else if (option.value === "new") { mediaReturn = "home"; go("new-input") } else if (option.value === "library") go(preferences.libraryView === "sources" ? "sources" : "library"); else if (option.value === "auth") openAuth("home"); else if (option.value === "compare") go("compare-mode"); else if (option.value === "settings") { settingsReturn = "home"; go("settings") } else if (option.value === "help") go("help"); else quit() }}/></Show>
 
-      <Show when={screen() === "auth"}><Menu title="authentication" subtitle={authBusy() ? "Reading system wallet… unlock it if prompted." : "Environment variables override saved keys. Select a provider to configure it."} items={AUTH_PROVIDERS.map((provider) => ({ name: provider.label, description: `API key: ${authStatuses()[provider.id]?.key || "not loaded"}`, value: provider.id }))} select={(option) => { if (authBusy()) return; setAuthProvider(option.value as AuthProvider); setAuthNotice(""); go("auth-provider") }}/></Show>
-      <Show when={screen() === "auth-provider"}><Menu title={`authentication · ${AUTH_PROVIDERS.find((provider) => provider.id === authProvider())!.label}`} subtitle={`${authNotice() ? authNotice() + " " : ""}Active API key: ${authStatuses()[authProvider()]?.key || "not loaded"}. Environment variables take precedence.`} items={options([
-        ["Set API key", "Save or replace a key in the system wallet", "key"],
+      <Show when={screen() === "auth"}><Menu title="authentication" subtitle={authBusy() ? "Reading system wallet… unlock it if prompted." : "Environment variables override saved keys. Select a provider to configure it."} items={AUTH_PROVIDERS.map((provider) => ({ name: `${provider.label} · ${authStatuses()[provider.id] ? hasSavedKey(authStatuses()[provider.id]) ? "Key saved" : authStatuses()[provider.id]?.key === "environment" ? "Environment key" : "No saved key" : "Checking…"}`, description: authSummary(authStatuses()[provider.id]), value: provider.id }))} select={(option) => { if (authBusy()) return; setAuthProvider(option.value as AuthProvider); setAuthNotice(""); go("auth-provider"); setMenuQuery("") }}/></Show>
+      <Show when={screen() === "auth-provider"}><Menu title={`authentication · ${AUTH_PROVIDERS.find((provider) => provider.id === authProvider())!.label}`} subtitle={`${authNotice() ? authNotice() + " " : ""}${authSummary(authStatuses()[authProvider()])}`} items={options([
+        [hasSavedKey(authStatuses()[authProvider()]) ? "Replace API key" : "Set API key", "Save a key securely in the system wallet", "key"],
         ...(authProvider() === "microsoft" ? [["Set Speech endpoint", authStatuses().microsoft?.endpoint ? `${authStatuses().microsoft!.endpoint} · ${authStatuses().microsoft!.endpointSource}` : "Azure Speech resource HTTPS URL", "endpoint"] as [string, string, string]] : []),
-        ["Remove saved credentials", "Clear this provider's saved key and endpoint", "remove"], ["Back", "All providers", "back"],
+        ...(hasSavedKey(authStatuses()[authProvider()]) || hasSavedEndpoint(authStatuses()[authProvider()]) ? [["Remove saved credentials", "Clear this provider's saved key and endpoint", "remove"] as [string, string, string]] : []), ["Back", "All providers", "back"],
       ])} select={(option) => { if (authBusy()) return; if (option.value === "key") go("auth-key"); else if (option.value === "endpoint") go("auth-endpoint"); else if (option.value === "remove") go("auth-remove"); else go("auth") }}/></Show>
       <Show when={screen() === "auth-key"}><SecretEntry/></Show>
       <Show when={screen() === "auth-endpoint"}><box flexDirection="column" padding={1}><Header title="authentication · Microsoft Speech endpoint" subtitle="Use the resource HTTPS URL without a path. Enter saves; Esc cancels."/><ErrorLine/><input focused={contentFocused()} placeholder="https://YOUR-RESOURCE.cognitiveservices.azure.com" onSubmit={(value) => { void saveAuth("endpoint", String(value)) }}/><Show when={authBusy()}><text>Saving…</text></Show></box></Show>

@@ -8,7 +8,7 @@ export const AUTH_PROVIDERS: Array<{ id: AuthProvider, label: string, env: strin
   { id: "fireworks", label: "Fireworks", env: "FIREWORKS_API_KEY" },
 ]
 export interface SavedAuth { key?: string, endpoint?: string }
-export interface AuthStatus { key: "environment" | "system wallet" | "not configured", endpoint?: string, endpointSource?: "environment" | "system wallet" | "not configured" }
+export interface AuthStatus { savedKey?: boolean, savedEndpoint?: boolean, key: "environment" | "system wallet" | "not configured", endpoint?: string, endpointSource?: "environment" | "system wallet" | "not configured" }
 export interface CredentialStore {
   name: string
   read(provider: AuthProvider): Promise<SavedAuth>
@@ -101,7 +101,7 @@ export class Authentication {
     const env = AUTH_PROVIDERS.find((item) => item.id === provider)!.env
     const saved = await this.store.read(provider)
     const endpoint = provider === "microsoft" ? process.env.AZURE_SPEECH_ENDPOINT || saved.endpoint : undefined
-    return { key: process.env[env] ? "environment" : saved.key ? "system wallet" : "not configured", ...(provider === "microsoft" ? { endpoint: endpoint ? validateEndpoint(endpoint) : undefined, endpointSource: process.env.AZURE_SPEECH_ENDPOINT ? "environment" : saved.endpoint ? "system wallet" : "not configured" } : {}) }
+    return { savedKey: Boolean(saved.key), savedEndpoint: Boolean(saved.endpoint), key: process.env[env] ? "environment" : saved.key ? "system wallet" : "not configured", ...(provider === "microsoft" ? { endpoint: endpoint ? validateEndpoint(endpoint) : undefined, endpointSource: process.env.AZURE_SPEECH_ENDPOINT ? "environment" : saved.endpoint ? "system wallet" : "not configured" } : {}) }
   }
   async key(provider: Provider): Promise<string> {
     if (provider === "youtube-transcript") throw new Error("YouTube subtitles do not require an API key.")

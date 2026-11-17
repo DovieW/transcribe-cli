@@ -116,16 +116,43 @@ describe("workbench", () => {
       save: async (provider, _field, value) => { saved[provider] = value; writes++ },
       remove: async (provider) => { delete saved[provider] },
     } })
-    await command(setup, "Authentication"); await choose(setup, "OpenAI"); await choose(setup, "Set API key")
+    await command(setup, "Authentication"); await choose(setup, "OpenAI")
+    expect(setup.captureCharFrame()).toContain("Saved API key: none")
+    expect(setup.captureCharFrame()).not.toContain("Remove saved credentials")
+    await choose(setup, "Set API key")
     await setup.mockInput.typeText("test-secret-value"); await setup.flush()
     expect(setup.captureCharFrame()).not.toContain("test-secret-value")
     expect(setup.captureCharFrame()).toContain("••••")
     setup.mockInput.pressEnter(); await setup.flush()
     expect(saved.openai).toBe("test-secret-value")
-    await choose(setup, "Set API key"); await setup.mockInput.typeText("never-save"); await back(setup)
+    expect(setup.captureCharFrame()).toContain("Saved API key: yes")
+    await choose(setup, "Replace API key"); await setup.mockInput.typeText("never-save"); await back(setup)
     expect(writes).toBe(1)
     await choose(setup, "Remove saved credentials"); await choose(setup, "Remove")
     expect(saved.openai).toBeUndefined()
+    expect(setup.captureCharFrame()).toContain("Saved API key: none")
+    expect(setup.captureCharFrame()).not.toContain("Remove saved credentials")
+  })
+
+  test("auth distinguishes saved credentials from environment overrides and endpoint-only records", async () => {
+    const { setup } = await app({ authentication: {
+      status: async (provider) => provider === "openai"
+        ? { key: "environment", savedKey: true }
+        : provider === "microsoft" ? { key: "not configured", savedKey: false, savedEndpoint: true, endpointSource: "environment", endpoint: "https://example.com" }
+        : { key: "environment", savedKey: false },
+      save: async () => {}, remove: async () => {},
+    } })
+    await command(setup, "Authentication")
+    expect(setup.captureCharFrame()).toContain("OpenAI · Key saved")
+    expect(setup.captureCharFrame()).toContain("Groq · Environment key")
+    await choose(setup, "OpenAI")
+    expect(setup.captureCharFrame()).toContain("Environment overrides the saved")
+    expect(setup.captureCharFrame()).toContain("Remove saved credentials")
+    await choose(setup, "Back"); await choose(setup, "Groq")
+    expect(setup.captureCharFrame()).toContain("Saved API key: none")
+    expect(setup.captureCharFrame()).not.toContain("Remove saved credentials")
+    await choose(setup, "Back"); await choose(setup, "Microsoft")
+    expect(setup.captureCharFrame()).toContain("Remove saved credentials")
   })
 
   test("layout resizes, plain icons persist, and mouse navigation works", async () => {

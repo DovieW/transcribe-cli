@@ -20,8 +20,10 @@ describe("system authentication", () => {
     process.env.OPENAI_API_KEY = "test-environment-key"
     expect(await auth.key("openai")).toBe("test-environment-key")
     expect((await auth.status("openai")).key).toBe("environment")
+    expect((await auth.status("openai")).savedKey).toBe(true)
     await auth.remove("openai")
     expect(records.get("openai")).toEqual({})
+    expect((await auth.status("openai")).savedKey).toBe(false)
     expect(await auth.key("openai")).toBe("test-environment-key")
     delete process.env.OPENAI_API_KEY
     await expect(auth.key("openai")).rejects.toThrow("Authentication")
